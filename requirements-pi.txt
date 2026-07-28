@@ -1,0 +1,46 @@
+# ============================================================
+# BlindAssist — Raspberry Pi Hardware Dependencies
+# ============================================================
+# Install AFTER requirements.txt on Raspberry Pi OS (Bookworm)
+# These require system-level libraries:
+#   sudo apt install portaudio19-dev libsdl2-dev tesseract-ocr
+# ============================================================
+
+# Audio hardware
+pygame>=2.6.0
+PyAudio>=0.2.14
+sounddevice>=0.4.7
+soundfile>=0.12.1
+webrtcvad-wheels
+
+# Camera & gesture (MediaPipe)
+# Keep below the Tasks-only builds that omit mp.solutions.hands on some platforms.
+mediapipe>=0.10.14,<0.10.35
+
+# Emotion analysis
+librosa>=0.10.1
+scikit-learn>=1.5.0
+
+# Offline LLM
+llama-cpp-python>=0.2.90
+
+# Fast LLM API
+groq>=0.9.0
+
+# GPS hardware
+pyserial>=3.5
+pynmea2>=1.19.0
+
+# Pi camera
+# NOTE: picamera2 is intentionally NOT listed here. modules/ocr.py now
+# captures from the CSI camera via the rpicam-still command-line tool
+# (already installed system-wide on every Raspberry Pi OS image) instead
+# of the picamera2 Python module. This avoids a real, common failure:
+# apt-installed picamera2/libcamera Python bindings are compiled for one
+# specific Python version and cannot be imported from a different venv
+# (e.g. a separate Python 3.11 venv created because mediapipe does not
+# yet support Python 3.13). If you ever need picamera2 directly for your
+# own code, install it via apt (sudo apt install python3-picamera2) and
+# create your venv with --system-site-packages using the SAME Python
+# version as your system Python — never pip install it into a
+# differently-versioned venv, it will not work. See CHANGES.md.

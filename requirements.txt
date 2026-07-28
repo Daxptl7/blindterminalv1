@@ -1,0 +1,53 @@
+# ============================================================
+# BlindAssist — Core Dependencies
+# ============================================================
+# Tested on: Python 3.11+ (macOS / Raspberry Pi OS)
+# For Pi-specific hardware deps, see: requirements-pi.txt
+# ============================================================
+
+# ── Audio / TTS ─────────────────────────────────────────────
+pyttsx3>=2.90
+SpeechRecognition>=3.10.0
+python-dotenv>=1.0.0
+
+# ── AI / LLM APIs ──────────────────────────────────────────
+google-generativeai>=0.7.0
+google-genai>=1.0.0
+openai>=1.30.0
+cohere>=5.0.0
+
+# ── Computer Vision ─────────────────────────────────────────
+opencv-python>=4.9.0
+pytesseract>=0.3.10
+ultralytics>=8.2.0
+
+# ── Vector Store / RAG ──────────────────────────────────────
+numpy>=1.26.0
+faiss-cpu
+sentence-transformers
+rank-bm25
+pinecone>=5.0.0
+
+# ── RAG Pipeline (Modular) ─────────────────────────────────
+nemoguardrails>=0.10.0
+Pillow>=10.0.0
+
+# ── Utilities ───────────────────────────────────────────────
+requests>=2.31.0
+readchar>=4.0.0
+logfire>=2.0.0
+
+# ── Optional (install if available on your platform) ────────
+# These may require system-level libs or may not have wheels
+# for every Python version. Install manually if pip fails:
+#
+#   pip install pygame>=2.6.0
+#   pip install PyAudio>=0.2.14
+#   pip install sounddevice>=0.4.7
+#   pip install soundfile>=0.12.1
+#   pip install webrtcvad-wheels
+#   pip install "mediapipe>=0.10.14,<0.10.35"
+#   pip install librosa>=0.10.1
+#   pip install scikit-learn>=1.5.0
+#   pip install groq>=0.9.0
+#   pip install llama-cpp-python>=0.2.90
