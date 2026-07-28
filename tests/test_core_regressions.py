@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 
-ROOT = Path(__file__).resolve().parents[2]
-APP_DIR = ROOT / "Blindterminal"
+ROOT = Path(__file__).resolve().parents[1]
+APP_DIR = ROOT
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
@@ -148,6 +148,107 @@ class CoreRegressionTests(unittest.TestCase):
 
         self.assertEqual(result, "नमस्ते")
         get.assert_called_once()
+
+    def test_ocr_auto_falls_back_to_tesseract_not_surya(self):
+        import numpy as np
+        from modules import ocr
+
+        original_config = dict(ocr._config)
+        try:
+            ocr._config.update({
+                "ocr_engine": "auto",
+                "gemini_api_key": "configured",
+                "ocr_surya_fallback": False,
+            })
+
+            with mock.patch.object(ocr._camera, "open", return_value=True):
+                with mock.patch.object(
+                    ocr._camera,
+                    "capture",
+                    return_value=np.zeros((20, 20, 3), dtype=np.uint8),
+                ):
+                    with mock.patch.object(
+                        ocr._gemini_engine,
+                        "extract_text",
+                        side_effect=RuntimeError("network down"),
+                    ):
+                        with mock.patch.object(
+                            ocr._tesseract_engine,
+                            "extract_text",
+                            return_value="fast local text",
+                        ):
+                            with mock.patch.object(ocr._engine, "extract_text") as surya:
+                                self.assertEqual(ocr.scan_and_read(), "fast local text")
+                                surya.assert_not_called()
+        finally:
+            ocr._config.clear()
+            ocr._config.update(original_config)
+
+    def test_ocr_does_not_use_surya_after_empty_tesseract_by_default(self):
+        import numpy as np
+        from modules import ocr
+
+        original_config = dict(ocr._config)
+        try:
+            ocr._config.update({
+                "ocr_engine": "tesseract",
+                "gemini_api_key": "",
+                "ocr_surya_fallback": False,
+            })
+
+            with mock.patch.object(ocr._camera, "open", return_value=True):
+                with mock.patch.object(
+                    ocr._camera,
+                    "capture",
+                    return_value=np.zeros((20, 20, 3), dtype=np.uint8),
+                ):
+                    with mock.patch.object(
+                        ocr._tesseract_engine,
+                        "extract_text",
+                        return_value="No text detected in the image.",
+                    ):
+                        with mock.patch.object(ocr._engine, "extract_text") as surya:
+                            self.assertEqual(
+                                ocr.scan_and_read(),
+                                "No text detected in the image.",
+                            )
+                            surya.assert_not_called()
+        finally:
+            ocr._config.clear()
+            ocr._config.update(original_config)
+
+    def test_ocr_auto_does_not_use_surya_when_tesseract_unavailable_by_default(self):
+        import numpy as np
+        from modules import ocr
+
+        original_config = dict(ocr._config)
+        try:
+            ocr._config.update({
+                "ocr_engine": "auto",
+                "gemini_api_key": "",
+                "ocr_surya_fallback": False,
+            })
+
+            with mock.patch.object(ocr._camera, "open", return_value=True):
+                with mock.patch.object(
+                    ocr._camera,
+                    "capture",
+                    return_value=np.zeros((20, 20, 3), dtype=np.uint8),
+                ):
+                    with mock.patch.object(
+                        ocr._tesseract_engine,
+                        "extract_text",
+                        return_value="OCR unavailable: missing tesseract",
+                    ):
+                        with mock.patch.object(ocr._engine, "extract_text") as surya:
+                            self.assertEqual(
+                                ocr.scan_and_read(),
+                                "OCR unavailable: missing tesseract",
+                            )
+                            surya.assert_not_called()
+        finally:
+            ocr._config.clear()
+            ocr._config.update(original_config)
 
 
 if __name__ == "__main__":

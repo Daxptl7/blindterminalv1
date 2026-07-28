@@ -1,1 +1,22 @@
+# Environment and config secrets
 .env
+config/settings.json
+
+# Python cache & build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# Log files
+logs/
+*.log
+
+# Temp audio / image files
+*.wav
+*.jpg
+*.jpeg
+*.png

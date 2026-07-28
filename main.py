@@ -257,11 +257,11 @@ def _morse_type_sentence(intro_message, timeout=90):
     registered). Falls back to keyboard typing if no Pico W is present.
 
     Button behaviour while typing (unchanged, just documented clearly):
-      - dot/dash on Buttons 1/2  -> builds up the current letter
-      - single press Button 3    -> finishes the letter, adds a space,
-                                     keeps typing (does NOT send yet)
-      - double press Button 3    -> finished — send the whole sentence
-      - long press Button 3      -> backspace (deletes the last letter)
+    - dot/dash on Buttons 1/2  -> builds up the current letter
+    - single press Button 3    -> finishes the letter, adds a space,
+                                    keeps typing (does NOT send yet)
+    - double press Button 3    -> finished — send the whole sentence
+    - long press Button 3      -> backspace (deletes the last letter)
 
     Returns the typed sentence (str), or "" if nothing was typed.
     """

@@ -16,6 +16,7 @@ of `.text_lines[].text`. See the SuryaOCREngine class docstring below.
 import cv2
 import io
 import logging
+import numpy as np
 import os
 import re
 import html as html_lib
@@ -51,7 +52,7 @@ RPICAM_BIN = (
     or "/usr/bin/rpicam-still"
 )
 
-# ── Language map  (Tesseract codes → Surya ISO 639-1 codes) ──────────────────
+# ── Language maps ─────────────────────────────────────────────────────────────
 LANG_MAP = {
     "eng": "en",
     "hin": "hi",
@@ -59,6 +60,15 @@ LANG_MAP = {
     "en":  "en",
     "hi":  "hi",
     "gu":  "gu",
+}
+
+TESSERACT_LANG_MAP = {
+    "eng": "eng",
+    "hin": "hin",
+    "guj": "guj",
+    "en":  "eng",
+    "hi":  "hin",
+    "gu":  "guj",
 }
 
 
@@ -69,6 +79,8 @@ def _load_config() -> dict:
     defaults = {
         "ocr_model_name":   "datalab-to/surya-ocr-2",
         "ocr_default_lang": "eng",
+        "ocr_engine":       "auto",
+        "ocr_surya_fallback": False,
         "ocr_preload":      False,
         "gemini_api_key":   "",
         "gemini_model_name": "gemini-3-flash-lite",
@@ -358,6 +370,100 @@ class SuryaOCREngine:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Tesseract OCR Engine  (fast local default)
+# ─────────────────────────────────────────────────────────────────────────────
+class TesseractOCREngine:
+    """
+    Fast local OCR path for Raspberry Pi and laptop use.
+
+    Surya OCR 2 can be accurate, but the app logs show it can spend more than
+    a minute inside inference on the Pi. Tesseract is already a documented
+    dependency for this project and is the right default for interactive scans.
+    """
+    _instance = None
+    _lock     = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    obj = super().__new__(cls)
+                    obj._available  = None
+                    obj._load_error = None
+                    cls._instance   = obj
+        return cls._instance
+
+    def _check_available(self) -> bool:
+        if self._available is not None:
+            return self._available
+
+        try:
+            import pytesseract
+            pytesseract.get_tesseract_version()
+            self._available = True
+            return True
+        except ImportError as e:
+            self._load_error = f"pytesseract not installed: {e}. Run: pip install pytesseract"
+        except Exception as e:
+            self._load_error = (
+                f"Tesseract binary unavailable: {e}. "
+                "Install it with: sudo apt install tesseract-ocr"
+            )
+
+        self._available = False
+        logger.error(self._load_error)
+        return False
+
+    @staticmethod
+    def _prepare_image(pil_image: Image.Image) -> Image.Image:
+        image = np.array(pil_image.convert("RGB"))
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+        height, width = gray.shape[:2]
+        if width < 1400:
+            scale = min(2.0, 1400 / max(width, 1))
+            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+        gray = cv2.bilateralFilter(gray, 7, 50, 50)
+        processed = cv2.adaptiveThreshold(
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            11,
+        )
+        return Image.fromarray(processed)
+
+    def extract_text(self, pil_image: Image.Image, lang: str = "eng") -> str:
+        if not self._check_available():
+            return f"OCR unavailable: {self._load_error}"
+
+        try:
+            import pytesseract
+
+            t0 = time.time()
+            tess_lang = TESSERACT_LANG_MAP.get(lang, "eng")
+            processed = self._prepare_image(pil_image)
+            text = pytesseract.image_to_string(
+                processed,
+                lang=tess_lang,
+                config="--oem 3 --psm 6",
+            )
+            text = re.sub(r"\s+", " ", text).strip()
+            elapsed_ms = int((time.time() - t0) * 1000)
+            logger.info(f"Tesseract OCR done in {elapsed_ms} ms | chars={len(text)}")
+
+            if not text:
+                return "No text detected in the image."
+            return text
+
+        except Exception as e:
+            logger.error(f"Tesseract OCR error: {e}")
+            return f"OCR error: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Gemini OCR Engine  (fast/free cloud path — needs internet)
 # ─────────────────────────────────────────────────────────────────────────────
 class GeminiOCREngine:
@@ -437,11 +543,15 @@ class GeminiOCREngine:
 # Module-level singletons
 # ─────────────────────────────────────────────────────────────────────────────
 _camera = CameraManager()
-_engine = SuryaOCREngine()          # local fallback — always available offline
+_tesseract_engine = TesseractOCREngine()  # fast local default
+_engine = SuryaOCREngine()          # optional high-accuracy/heavy fallback
 _gemini_engine = GeminiOCREngine()  # fast cloud path — used first when possible
 
-# Optional preload at import time (set ocr_preload: true in settings.json)
-if _config.get("ocr_preload", False):
+# Optional Surya preload. Loading Surya can make a Pi feel frozen, so it only
+# preloads when Surya is explicitly selected or enabled as a fallback.
+_ocr_engine_name = str(_config.get("ocr_engine", "auto")).lower()
+_surya_enabled = _ocr_engine_name == "surya" or bool(_config.get("ocr_surya_fallback", False))
+if _surya_enabled and _config.get("ocr_preload", False):
     threading.Thread(target=_engine._load, daemon=True).start()
 
 
@@ -477,15 +587,31 @@ def scan_and_read(lang: str = "eng") -> str:
         logger.error(f"Frame conversion error: {e}")
         return "Image processing error."
 
-    # Try the fast cloud path first (Gemini). Any failure here — no
-    # internet, bad/missing key, timeout, package not installed — falls
-    # straight back to the local Surya engine, so this always keeps
-    # working offline.
-    if _config.get("gemini_api_key"):
+    engine_name = str(_config.get("ocr_engine", "auto")).lower()
+
+    # In auto mode, Gemini is still the first choice when configured, but any
+    # failure drops to fast local OCR instead of the heavy Surya model.
+    if engine_name in ("auto", "gemini") and _config.get("gemini_api_key"):
         try:
-            return _gemini_engine.extract_text(pil_image, lang=lang)
+            text = _gemini_engine.extract_text(pil_image, lang=lang)
+            if text and not text.lower().startswith(("ocr unavailable", "ocr error")):
+                return text
         except Exception as e:
-            logger.warning(f"Gemini OCR unavailable, falling back to Surya: {e}")
+            logger.warning(f"Gemini OCR unavailable, falling back to local OCR: {e}")
+
+    if engine_name in ("auto", "gemini", "tesseract"):
+        text = _tesseract_engine.extract_text(pil_image, lang=lang)
+        text_lower = text.lower() if text else ""
+        if (
+            text
+            and not text_lower.startswith(("ocr unavailable", "ocr error"))
+            and "no text detected" not in text_lower
+        ):
+            return text
+
+        if not _config.get("ocr_surya_fallback", False):
+            return text
+        logger.warning(f"Tesseract OCR did not produce usable text, trying Surya: {text}")
 
     return _engine.extract_text(pil_image, lang=lang)
 
