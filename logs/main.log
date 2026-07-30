@@ -2536,3 +2536,104 @@ Or set LLAMA_CPP_BINARY in your env to the binary path.
 2026-07-26 16:09:50,750 [INFO] Speaking: "Goodbye. Shutting down Blind Assist...."
 2026-07-26 16:09:51,750 [INFO] Shutdown complete.
 2026-07-26 16:09:51,809 [ERROR] Playback error: mixer not initialized
+2026-07-28 23:18:33,561 [INFO] pygame.mixer initialized on default device.
+2026-07-28 23:18:33,564 [INFO] Module loaded: tts
+2026-07-28 23:18:33,565 [INFO] webrtcvad not installed. Using standard speech_recognition.
+2026-07-28 23:18:33,565 [INFO] Module loaded: voice
+2026-07-28 23:18:33,568 [INFO] Module loaded: ai_query
+2026-07-28 23:18:33,569 [INFO] Morse decoder started with auto-timing.
+2026-07-28 23:18:33,569 [INFO] Module loaded: morse
+2026-07-28 23:18:34,648 [INFO] Module loaded: ocr
+2026-07-28 23:18:34,649 [INFO] Module loaded: translator
+2026-07-28 23:18:34,910 [INFO] Module loaded: gesture_control
+2026-07-28 23:18:34,910 [INFO] Module loaded: emotion_engine
+2026-07-28 23:18:34,911 [INFO] Module loaded: gps_navigator
+2026-07-28 23:18:34,940 [INFO] Module loaded: confidential_mode
+2026-07-28 23:18:34,941 [INFO] Module loaded: object_detection
+2026-07-28 23:18:34,942 [WARNING] Pico W Morse buttons unavailable, using keyboard fallback: No Pico W detected. Check the USB cable connection.
+2026-07-28 23:18:34,942 [INFO] ==================================================
+2026-07-28 23:18:34,943 [INFO] BlindAssist Starting...
+2026-07-28 23:18:34,943 [INFO] ==================================================
+2026-07-28 23:18:36,029 [INFO] TTS Manager ready.
+2026-07-28 23:18:36,030 [INFO] Speaking: "Welcome to Blind Assist. Press a number to select a mode...."
+2026-07-28 23:18:36,030 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
+2026-07-28 23:18:36,098 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
+2026-07-28 23:22:37,367 [INFO] pygame.mixer initialized on default device.
+2026-07-28 23:22:37,367 [INFO] Module loaded: tts
+2026-07-28 23:22:37,396 [INFO] WebRTC VAD initialized.
+2026-07-28 23:22:37,396 [INFO] Module loaded: voice
+2026-07-28 23:22:37,400 [INFO] Module loaded: ai_query
+2026-07-28 23:22:37,400 [INFO] Morse decoder started with auto-timing.
+2026-07-28 23:22:37,400 [INFO] Module loaded: morse
+2026-07-28 23:22:37,401 [INFO] Module loaded: ocr
+2026-07-28 23:22:37,459 [INFO] Module loaded: translator
+2026-07-28 23:22:37,459 [INFO] Module loaded: gesture_control
+2026-07-28 23:22:37,460 [INFO] Module loaded: emotion_engine
+2026-07-28 23:22:37,460 [INFO] Module loaded: gps_navigator
+2026-07-28 23:22:37,461 [WARNING] Module unavailable: confidential_mode — No module named 'serial'
+2026-07-28 23:22:37,463 [INFO] Module loaded: object_detection
+2026-07-28 23:22:37,463 [WARNING] Pico W Morse buttons unavailable, using keyboard fallback: No module named 'serial'
+2026-07-28 23:22:37,463 [INFO] Mode 2: Morse Type
+2026-07-28 23:22:37,465 [WARNING] Gemini OCR unavailable, falling back to local OCR: network down
+2026-07-28 23:22:37,468 [INFO] Loading faiss.
+2026-07-28 23:22:37,551 [INFO] Successfully loaded faiss.
+2026-07-28 23:22:37,850 [ERROR] Unsupported file type for indexing: .bin
+2026-07-28 23:22:37,851 [INFO] Translating from English to Hindi: "hello..."
+2026-07-28 23:22:37,851 [INFO] Translation result: "नमस्ते..."
+2026-07-28 23:22:37,854 [INFO] Vector store saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/tmp7y7084ou
+2026-07-28 23:22:37,854 [WARNING] Embedding dimension changed from 3 to 4. Dropping incompatible local vectors; re-index documents for best RAG results.
+2026-07-28 23:22:37,855 [INFO] Vector store saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/tmp7y7084ou
+2026-07-28 23:22:37,855 [WARNING] Query embedding dimension 3 does not match vector store dimension 4. Re-index documents with the current embedding model.
+2026-07-28 23:22:37,855 [WARNING] Ignoring legacy metadata.pkl because pickle can execute code. Set BLINDASSIST_TRUST_LEGACY_PICKLE=1 once to migrate a trusted local store.
+2026-07-28 23:27:47,432 [INFO] pygame.mixer initialized on default device.
+2026-07-28 23:27:47,432 [INFO] Module loaded: tts
+2026-07-28 23:27:47,442 [INFO] WebRTC VAD initialized.
+2026-07-28 23:27:47,442 [INFO] Module loaded: voice
+2026-07-28 23:27:47,446 [INFO] Module loaded: ai_query
+2026-07-28 23:27:47,446 [INFO] Morse decoder started with auto-timing.
+2026-07-28 23:27:47,446 [INFO] Module loaded: morse
+2026-07-28 23:27:47,665 [INFO] Module loaded: ocr
+2026-07-28 23:27:47,738 [INFO] Module loaded: translator
+2026-07-28 23:27:48,012 [INFO] Module loaded: gesture_control
+2026-07-28 23:27:48,012 [INFO] Module loaded: emotion_engine
+2026-07-28 23:27:48,013 [INFO] Module loaded: gps_navigator
+2026-07-28 23:27:48,014 [WARNING] Module unavailable: confidential_mode — No module named 'serial'
+2026-07-28 23:27:48,015 [INFO] Module loaded: object_detection
+2026-07-28 23:27:48,015 [WARNING] Pico W Morse buttons unavailable, using keyboard fallback: No module named 'serial'
+2026-07-28 23:27:48,015 [INFO] ==================================================
+2026-07-28 23:27:48,015 [INFO] BlindAssist Starting...
+2026-07-28 23:27:48,015 [INFO] ==================================================
+2026-07-28 23:27:49,414 [INFO] TTS Manager ready.
+2026-07-28 23:27:49,414 [INFO] Speaking: "Welcome to Blind Assist. Press a number to select a mode...."
+2026-07-28 23:27:49,414 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
+2026-07-28 23:27:49,451 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
+2026-07-28 23:28:02,535 [INFO] Mode 1: OCR Scan
+2026-07-28 23:28:02,538 [INFO] Speaking: "Starting OCR scan. Hold your document steady...."
+2026-07-28 23:28:02,539 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
+2026-07-28 23:28:02,550 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
+2026-07-28 23:28:04,096 [INFO] Camera ready via USB OpenCV index 0
+2026-07-28 23:28:04,097 [INFO] Speaking: "Scanning now...."
+2026-07-28 23:28:04,097 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
+2026-07-28 23:28:04,099 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
+2026-07-28 23:28:05,085 [INFO] AFC is enabled with max remote calls: 10.
+2026-07-28 23:28:21,170 [INFO] AFC remote call 1 is done.
+2026-07-28 23:28:21,171 [INFO] Gemini OCR done in 16085 ms
+2026-07-28 23:28:21,180 [INFO] OCR: J.K. ROWLING
+HARRY POTER
+2026-07-28 23:28:21,181 [INFO] Speaking: "I found: J.K. ROWLING
+HARRY POTER..."
+2026-07-28 23:28:21,182 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
+2026-07-28 23:28:21,187 [INFO] Loading faiss.
+2026-07-28 23:28:21,278 [INFO] Successfully loaded faiss.
+2026-07-28 23:28:21,279 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
+2026-07-28 23:28:21,286 [INFO] Embedder initialized with Gemini API model: gemini-embedding-2.
+2026-07-28 23:28:21,286 [ERROR] Failed to initialize RAG pipeline in ai_query: [Errno 17] File exists: '/Users/daxpatel/Desktop/blindterminalv1/data'
+2026-07-28 23:28:21,286 [INFO] OCR text indexed into RAG vector store.
+2026-07-28 23:28:21,286 [INFO] Speaking: "Would you like to explain this? Press 1 for yes, 2 for no...."
+2026-07-28 23:28:21,286 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
+2026-07-28 23:28:21,288 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
+2026-07-28 23:28:45,146 [INFO] Shutting down...
+2026-07-28 23:28:45,147 [INFO] Speaking: "Goodbye. Shutting down Blind Assist...."
+2026-07-28 23:28:45,150 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
+2026-07-28 23:28:45,172 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
+2026-07-28 23:28:45,520 [INFO] Camera released.
