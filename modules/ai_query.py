@@ -1,9 +1,14 @@
 """
-ai_query.py — BlindAssist Project (OPTIMIZED)
+ai_query.py — BlindAssist Project (OPTIMIZED v2)
 ===============================================
 Async API calls with concurrent fallback.
 Preloads offline model at import time (hidden in thread).
 Non-blocking for online APIs.
+
+v2 additions:
+- LatencyNarrator: Speaks periodic reassurance messages to the user during
+  long AI processing times, preventing blind users from thinking the device
+  has frozen. Configurable interval and message pool.
 """
 
 import sys
@@ -16,7 +21,7 @@ import concurrent.futures
 import time
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, List
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -91,6 +96,101 @@ _offline_model = None
 _offline_loading = threading.Event()
 _offline_ready = False
 MAX_PROMPT_CHARS = 8000
+
+# ── LATENCY NARRATOR ────────────────────────────────────────
+# Speaks periodic reassurance messages to the user while AI processes their query.
+# This is critical for accessibility — a blind user has no visual loading spinner.
+
+# Default narration messages (rotated in order, then loops)
+LATENCY_MESSAGES = [
+    "Your question is being processed.",
+    "Still working on your answer, please wait.",
+    "Almost there, just a moment.",
+    "This is taking a bit longer than usual. Hang on.",
+    "Still processing. Thank you for your patience.",
+]
+
+# How many seconds of silence before the first narration message
+LATENCY_FIRST_DELAY = 3.0
+
+# How many seconds between subsequent narration messages
+LATENCY_INTERVAL = 4.0
+
+
+class LatencyNarrator:
+    """
+    Background narrator that speaks periodic reassurance messages while
+    the AI query is processing. Keeps blind users engaged and informed
+    during high-latency API calls.
+
+    Usage:
+        narrator = LatencyNarrator(speak_fn=tts.speak)
+        narrator.start()
+        # ... do slow work ...
+        narrator.stop()  # stops narration immediately
+
+    Or as a context manager:
+        with LatencyNarrator(speak_fn=tts.speak):
+            # ... do slow work ...
+    """
+
+    def __init__(
+        self,
+        speak_fn: Optional[Callable] = None,
+        messages: Optional[List[str]] = None,
+        first_delay: float = LATENCY_FIRST_DELAY,
+        interval: float = LATENCY_INTERVAL,
+    ):
+        self._speak_fn = speak_fn
+        self._messages = messages or LATENCY_MESSAGES
+        self._first_delay = first_delay
+        self._interval = interval
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _narrate_loop(self):
+        """Background thread: waits for first_delay, then speaks messages at interval."""
+        # Wait for the initial delay before first message
+        if self._stop_event.wait(timeout=self._first_delay):
+            return  # Stopped before first message was needed
+
+        msg_index = 0
+        while not self._stop_event.is_set():
+            message = self._messages[msg_index % len(self._messages)]
+            if self._speak_fn:
+                try:
+                    self._speak_fn(message)
+                except Exception as e:
+                    logger.debug(f"Narrator speak error: {e}")
+            else:
+                logger.info(f"[Narrator] {message}")
+
+            msg_index += 1
+
+            # Wait for interval before next message (or stop signal)
+            if self._stop_event.wait(timeout=self._interval):
+                return
+
+    def start(self):
+        """Start the background narration thread."""
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._narrate_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop narration immediately. Safe to call multiple times."""
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        self._thread = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop()
+        return False
 
 def _bounded_text(text: str, limit: int = MAX_PROMPT_CHARS) -> str:
     text = text or ""
@@ -307,11 +407,20 @@ def _ask_offline(prompt: str, simplify: bool = False) -> Optional[str]:
 
 # ── PUBLIC API ──────────────────────────────────────────────
 
-def ask_ai(prompt: str, context: str = '', simplify: bool = False) -> str:
+def ask_ai(prompt: str, context: str = '', simplify: bool = False,
+           speak_fn: Optional[Callable] = None) -> str:
     """
     Concurrent AI query with fastest-response-wins strategy.
     Tries Groq + OpenAI simultaneously, uses whichever answers first.
     Falls back to Gemini, then offline.
+
+    Args:
+        speak_fn: Optional TTS function for latency narration. If provided,
+                  the system will speak periodic reassurance messages to the
+                  user while the AI processes their query (e.g., "Your question
+                  is being processed", "Still working on it"). This prevents
+                  blind users from thinking the device has frozen during
+                  high-latency API calls.
     """
     if not prompt or not prompt.strip():
         return "I didn't receive a question. Please try again."
@@ -330,45 +439,54 @@ def ask_ai(prompt: str, context: str = '', simplify: bool = False) -> str:
     context = _bounded_text(context, 6000)
     full_prompt = f"Context:\n{context}\n\nQuestion: {prompt}" if context else prompt
     logger.info(f"Query: \"{prompt[:50]}...\"")
-    
-    # Phase 1: Race Groq vs OpenAI (fastest wins)
-    results = {}
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+    # Start the latency narrator — speaks periodic updates while AI processes
+    narrator = LatencyNarrator(speak_fn=speak_fn)
+    narrator.start()
+
     try:
-        futures = {
-            executor.submit(_ask_groq, full_prompt, simplify): 'groq',
-            executor.submit(_ask_openai, full_prompt, simplify): 'openai',
-        }
+        # Phase 1: Race Groq vs OpenAI (fastest wins)
+        results = {}
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         try:
-            for future in concurrent.futures.as_completed(futures, timeout=10):
-                source = futures[future]
-                try:
-                    result = future.result()
-                    if result:
-                        results[source] = result
-                        logger.info(f"First response from {source}")
-                        break  # First valid answer wins
-                except Exception as e:
-                    logger.debug(f"{source} returned no answer: {e}")
-        except concurrent.futures.TimeoutError:
-            logger.warning("Timed out waiting for fast AI providers.")
+            futures = {
+                executor.submit(_ask_groq, full_prompt, simplify): 'groq',
+                executor.submit(_ask_openai, full_prompt, simplify): 'openai',
+            }
+            try:
+                for future in concurrent.futures.as_completed(futures, timeout=10):
+                    source = futures[future]
+                    try:
+                        result = future.result()
+                        if result:
+                            results[source] = result
+                            logger.info(f"First response from {source}")
+                            break  # First valid answer wins
+                    except Exception as e:
+                        logger.debug(f"{source} returned no answer: {e}")
+            except concurrent.futures.TimeoutError:
+                logger.warning("Timed out waiting for fast AI providers.")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        if results:
+            return list(results.values())[0]
+
+        # Phase 2: Try Gemini
+        result = _ask_gemini(full_prompt, simplify)
+        if result:
+            return result
+
+        # Phase 3: Offline (already preloaded)
+        result = _ask_offline(full_prompt, simplify)
+        if result:
+            return result
+
+        return "I'm sorry, I cannot answer right now. Please check your connection."
+
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
-    
-    if results:
-        return list(results.values())[0]
-    
-    # Phase 2: Try Gemini
-    result = _ask_gemini(full_prompt, simplify)
-    if result:
-        return result
-    
-    # Phase 3: Offline (already preloaded)
-    result = _ask_offline(full_prompt, simplify)
-    if result:
-        return result
-    
-    return "I'm sorry, I cannot answer right now. Please check your connection."
+        # Always stop narration before returning the answer
+        narrator.stop()
 
 def index_text_in_rag(text: str):
     """Indexes raw text (e.g. OCR scan) into the RAG vector database."""
@@ -394,4 +512,4 @@ if __name__ == '__main__':
         if q:
             print("Racing APIs...")
             start = time.time()
-            print(f"Answer ({time.time()-start:.2f}s): {ask_ai(q)}\n")
+            print(f"Answer ({time.time()-start:.2f}s): {ask_ai(q, speak_fn=print)}\n")

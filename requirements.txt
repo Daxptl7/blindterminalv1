@@ -5,9 +5,12 @@
 # For Pi-specific hardware deps, see: requirements-pi.txt
 # ============================================================
 
-# ── Audio / TTS ─────────────────────────────────────────────
+# ── Audio / STT / Speech ────────────────────────────────────
 pyttsx3>=2.90
 SpeechRecognition>=3.10.0
+vosk>=0.3.45
+pocketsphinx>=5.0.0
+gTTS>=2.5.0
 python-dotenv>=1.0.0
 
 # ── AI / LLM APIs ──────────────────────────────────────────

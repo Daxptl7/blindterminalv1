@@ -229,7 +229,8 @@ def mode_ocr_scan():
             if _has("ai_query"):
                 answer = _modules["ai_query"].ask_ai(
                     "Explain this in simple terms for a visually impaired student:",
-                    context=text
+                    context=text,
+                    speak_fn=_speak
                 )
                 _speak(answer)
             else:
@@ -320,7 +321,7 @@ def mode_morse_type():
 
     _speak("Thinking...")
     if _has("ai_query"):
-        answer = _modules["ai_query"].ask_ai(question)
+        answer = _modules["ai_query"].ask_ai(question, speak_fn=_speak)
         _speak(answer)
     else:
         _speak("AI module is not available.")
@@ -351,7 +352,7 @@ def mode_voice_ask():
 
     _speak("Thinking...")
     if _has("ai_query"):
-        answer = _modules["ai_query"].ask_ai(question)
+        answer = _modules["ai_query"].ask_ai(question, speak_fn=_speak)
         _speak(answer)
     else:
         _speak("AI module is not available.")
@@ -921,7 +922,7 @@ def mode_math_solver():
         return
 
     _speak("Solving...")
-    answer = _modules["ai_query"].ask_ai(MATH_SOLVER_PROMPT + problem)
+    answer = _modules["ai_query"].ask_ai(MATH_SOLVER_PROMPT + problem, speak_fn=_speak)
     _speak(answer)
 
 # ── MAIN LOOP ───────────────────────────────────────────────

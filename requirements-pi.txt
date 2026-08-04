@@ -6,12 +6,14 @@
 #   sudo apt install portaudio19-dev libsdl2-dev tesseract-ocr
 # ============================================================
 
-# Audio hardware
+# Audio hardware & offline STT
 pygame>=2.6.0
 PyAudio>=0.2.14
 sounddevice>=0.4.7
 soundfile>=0.12.1
 webrtcvad-wheels
+vosk>=0.3.45
+pocketsphinx>=5.0.0
 
 # Camera & gesture (MediaPipe)
 # Keep below the Tasks-only builds that omit mp.solutions.hands on some platforms.
