@@ -6,23 +6,45 @@
 # ============================================================
 
 # ── Audio / STT / Speech ────────────────────────────────────
+# gTTS + pygame are the DEFAULT speech path (tts_engine="gtts" in
+# settings.json), so they are required, not optional. When they were listed as
+# optional the device generated audio and silently discarded it — no sound and
+# no error. tts.py now falls back to pyttsx3 and to a system player
+# (afplay/aplay/mpg123), but install these for the intended voice quality.
 pyttsx3>=2.90
+gTTS>=2.5.0
+pygame>=2.6.0
 SpeechRecognition>=3.10.0
 vosk>=0.3.45
 pocketsphinx>=5.0.0
-gTTS>=2.5.0
 python-dotenv>=1.0.0
 
+# ── Hardware I/O ────────────────────────────────────────────
+# pyserial is imported by morse_serial.py (Pico W buttons), gps_navigator.py
+# and confidential_mode.py. It was never listed, so on a clean install the
+# whole privacy module failed to import and Confidential Mode silently did
+# nothing.
+pyserial>=3.5
+pynmea2>=1.19.0
+
 # ── AI / LLM APIs ──────────────────────────────────────────
-google-generativeai>=0.7.0
+# This project imports `from google import genai` — that is google-genai, the
+# current SDK. google-generativeai is the superseded package and nothing here
+# imports it, so it is not listed.
 google-genai>=1.0.0
 openai>=1.30.0
 cohere>=5.0.0
+groq>=0.9.0
 
 # ── Computer Vision ─────────────────────────────────────────
 opencv-python>=4.9.0
 pytesseract>=0.3.10
 ultralytics>=8.2.0
+
+# ── Signal processing ───────────────────────────────────────
+# voice.py uses scipy.signal.lfilter for the microphone bandpass filter; the
+# pure-Python fallback works but is ~25x slower, which is felt on a Pi.
+scipy>=1.11.0
 
 # ── Vector Store / RAG ──────────────────────────────────────
 numpy>=1.26.0
@@ -42,15 +64,21 @@ logfire>=2.0.0
 
 # ── Optional (install if available on your platform) ────────
 # These may require system-level libs or may not have wheels
-# for every Python version. Install manually if pip fails:
+# for every Python version. Install manually if pip fails.
+# Everything below degrades gracefully when absent:
 #
-#   pip install pygame>=2.6.0
-#   pip install PyAudio>=0.2.14
+#   pip install PyAudio>=0.2.14          # VAD capture (hands-free voice)
+#   pip install webrtcvad-wheels         # VAD capture (hands-free voice)
 #   pip install sounddevice>=0.4.7
 #   pip install soundfile>=0.12.1
-#   pip install webrtcvad-wheels
-#   pip install "mediapipe>=0.10.14,<0.10.35"
-#   pip install librosa>=0.10.1
-#   pip install scikit-learn>=1.5.0
-#   pip install groq>=0.9.0
-#   pip install llama-cpp-python>=0.2.90
+#   pip install "mediapipe>=0.10.14,<0.10.35"   # Mode 5 gestures; no Py3.13 wheels yet
+#   pip install librosa>=0.10.1          # emotion engine
+#   pip install scikit-learn>=1.5.0      # emotion engine
+#   pip install llama-cpp-python>=0.2.90 # offline LLM fallback
+#   pip install surya-ocr                # high-accuracy OCR (slow on a Pi)
+#
+# System packages (not pip):
+#   Tesseract OCR — macOS: brew install tesseract
+#                   Pi:    sudo apt install tesseract-ocr
+#   Audio player  — Pi:    sudo apt install alsa-utils mpg123
+#                          (tts.py's fallback player; macOS uses built-in afplay)

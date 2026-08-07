@@ -1,8 +1,8 @@
 import os
 import logging
 import threading
+from collections import OrderedDict
 from typing import List, Optional
-from functools import lru_cache
 import numpy as np
 from dotenv import load_dotenv
 
@@ -39,6 +39,13 @@ class Embedder:
 
         # Thread lock for safe lazy-loading of the local model across concurrent calls
         self._model_lock = threading.Lock()
+
+        # Per-instance bounded LRU embedding cache (see _cached_embedding).
+        self._cache = OrderedDict()
+        self._cache_size = 512
+        self._cache_lock = threading.Lock()
+        self._cache_hits = 0
+        self._cache_misses = 0
 
         # Fetch cloud embedding model name and output dimension from environment variables (defaults to gemini-embedding-2 & 768 dimensions)
         self.gemini_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2")
@@ -126,16 +133,37 @@ class Embedder:
 
         return np.array(values or [], dtype=np.float32)
 
-    @lru_cache(maxsize=512)
     def _cached_embedding(self, text: str) -> tuple:
         """
-        Internal cached embedding generator. Returns a tuple (hashable for LRU cache).
-        Avoids re-computing embeddings for identical text strings that have already been processed.
-        Cache holds up to 512 unique text entries in memory.
+        Internal cached embedding generator. Returns a tuple (hashable, cheap to store).
+
+        Implemented as a per-instance dict rather than @lru_cache on the method.
+        @lru_cache on a method keys the cache on `self`, which keeps every
+        Embedder that was ever created alive for the process lifetime (the
+        cache holds a strong reference), and shares one 512-entry budget across
+        all instances.
         """
+        with self._cache_lock:
+            hit = self._cache.get(text)
+            if hit is not None:
+                self._cache_hits += 1
+                self._cache.move_to_end(text)
+                return hit
+
+        self._cache_misses += 1
         vec = self._compute_embedding(text)
-        # Convert to tuple for LRU cache (numpy arrays are not hashable)
-        return tuple(vec.tolist()) if vec.size > 0 else ()
+        # Convert to tuple for cheap, immutable storage (numpy arrays are unhashable)
+        result = tuple(vec.tolist()) if vec.size > 0 else ()
+        self._cache_put(text, result)
+        return result
+
+    def _cache_put(self, text: str, value: tuple):
+        """Insert into the bounded LRU cache, evicting the oldest entry if full."""
+        with self._cache_lock:
+            self._cache[text] = value
+            self._cache.move_to_end(text)
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
 
     def _compute_embedding(self, text: str) -> np.ndarray:
         """
@@ -203,9 +231,13 @@ class Embedder:
                 try:
                     batch_result = self.local_model.encode(clean_texts, show_progress_bar=False)
                     matrix = np.array(batch_result, dtype=np.float32)
-                    # Populate the LRU cache with individual results for future single-text lookups
-                    for i, text in enumerate(clean_texts):
-                        self._cached_embedding.__wrapped__(self, text)  # noqa: warm cache
+                    # Populate the cache from the batch we just computed.
+                    # The previous version called self._cached_embedding.__wrapped__(...),
+                    # which bypasses the cache decorator entirely: it stored
+                    # nothing and re-ran a full embedding per text, so every
+                    # batch silently cost 2x the work it reported saving.
+                    for row, text in zip(matrix, clean_texts):
+                        self._cache_put(text, tuple(row.tolist()))
                     return matrix
                 except Exception as e:
                     logger.error(f"Local batch embedding error, falling back to per-text: {e}")
@@ -219,14 +251,22 @@ class Embedder:
 
     def clear_cache(self):
         """
-        Clears the LRU embedding cache. Useful when switching models or freeing memory.
+        Clears the embedding cache. Useful when switching models or freeing memory.
         """
-        self._cached_embedding.cache_clear()
+        with self._cache_lock:
+            self._cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
         logger.info("Embedding cache cleared.")
 
     @property
-    def cache_info(self):
+    def cache_info(self) -> dict:
         """
         Returns cache hit/miss statistics for performance monitoring.
         """
-        return self._cached_embedding.cache_info()
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "currsize": len(self._cache),
+            "maxsize": self._cache_size,
+        }

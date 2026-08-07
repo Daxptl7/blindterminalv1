@@ -29,42 +29,51 @@ class RAGPipeline:
         self.retriever = retriever
         self.gemini_agent = gemini_agent
 
-    def index_file(self, file_path: str, tags: Optional[dict] = None) -> bool:
-        path = Path(file_path).expanduser().resolve()
+    def _describe_markdown_images(self, path: Path, content: str) -> str:
+        """Replace Markdown image references with spoken-word diagram descriptions.
 
-        if tags is None:
-            tags = {}
-        try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+        Textbook diagrams carry real information a blind student otherwise
+        loses entirely, so each referenced image is sent to the multimodal
+        model and its description is inlined into the indexed text.
 
-            if path.suffix.lower() == '.md':
-                
-                image_pattern = re.compile(r'!\[(.*?)\]\((.*?)\)')
-                matches = list(image_pattern.finditer(content))
-                for match in matches:
-                    alt_text = match.group(1)
-                    img_rel_path = match.group(2)
-                    
-                    img_abs_path = path.parent / img_rel_path
-                    
-                    if img_abs_path.exists() and img_abs_path.is_file():
-                        try:
-                            with Image.open(img_abs_path) as img:
-                                description = self.gemini_agent.describe_image(img, context_hint=alt_text)
-                                
-                            replacement_text = f"\n[Diagram Reference: {alt_text}. Description: {description}]\n"
-                            content = content.replace(match.group(0), replacement_text)
-                            logger.info(f"Successfully processed image: {img_rel_path}")
-                        except Exception as img_err:
-                            logger.warning(f"Skipping image {img_rel_path}: {img_err}")
-                    else:
-                        logger.warning(f"Referenced image not found: {img_abs_path}")
-            self.index_document(content, tags=tags)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to read file {file_path}: {e}")
-            return False
+        This used to live in a second `index_file` definition further down the
+        class body. Python keeps only the last definition of a duplicated
+        method, so that copy silently shadowed this one and diagram
+        descriptions never ran at all.
+        """
+        image_pattern = re.compile(r'!\[(.*?)\]\((.*?)\)')
+        for match in list(image_pattern.finditer(content)):
+            alt_text = match.group(1)
+            img_rel_path = match.group(2)
+
+            # Only local, in-tree images: a Markdown file must not be able to
+            # make the device fetch arbitrary remote URLs during indexing.
+            if img_rel_path.startswith(("http://", "https://", "//")):
+                logger.info(f"Skipping remote image reference: {img_rel_path}")
+                continue
+
+            try:
+                img_abs_path = (path.parent / img_rel_path).resolve()
+                img_abs_path.relative_to(path.parent.resolve())
+            except Exception:
+                logger.warning(f"Skipping image outside document directory: {img_rel_path}")
+                continue
+
+            if not (img_abs_path.exists() and img_abs_path.is_file()):
+                logger.warning(f"Referenced image not found: {img_abs_path}")
+                continue
+
+            try:
+                with Image.open(img_abs_path) as img:
+                    description = self.gemini_agent.describe_image(img, context_hint=alt_text)
+                if description:
+                    replacement = f"\n[Diagram Reference: {alt_text}. Description: {description}]\n"
+                    content = content.replace(match.group(0), replacement)
+                    logger.info(f"Described diagram: {img_rel_path}")
+            except Exception as img_err:
+                logger.warning(f"Skipping image {img_rel_path}: {img_err}")
+
+        return content
 
     def _chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
         """
@@ -181,6 +190,12 @@ class RAGPipeline:
         try:
             with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
+
+            # Markdown chapters may reference diagrams; describe them so their
+            # content is searchable and speakable too.
+            if path.suffix.lower() == '.md':
+                content = self._describe_markdown_images(path, content)
+
             self.index_document(content, tags=tags)
             return True
         except Exception as e:

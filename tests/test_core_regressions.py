@@ -1,7 +1,9 @@
 import builtins
 import importlib
+import os
 import sys
 import tempfile
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,11 +87,11 @@ class CoreRegressionTests(unittest.TestCase):
 
         main._modules["morse"] = importlib.import_module("modules.morse")
         main._modules["ai_query"] = mock.Mock(
-            ask_ai=lambda question: asked.append(question) or "answer"
+            ask_ai=lambda question, **kwargs: asked.append(question) or "answer"
         )
 
-        with mock.patch.object(main, "_speak", side_effect=spoken.append):
-            with mock.patch.object(builtins, "input", return_value=".-"):
+        with mock.patch.object(main, "_speak", side_effect=lambda t, **k: spoken.append(t)):
+            with mock.patch.object(main, "_keyboard_input", return_value=".-"):
                 main.mode_morse_type()
 
         self.assertEqual(asked, ["A"])
@@ -249,6 +251,366 @@ class CoreRegressionTests(unittest.TestCase):
         finally:
             ocr._config.clear()
             ocr._config.update(original_config)
+
+
+class RepairedDefectTests(unittest.TestCase):
+    """Regressions for defects that shipped silently — each of these
+    reproduced a real failure on the device before the fix."""
+
+    # ── TTS: the device was completely silent ────────────────────────────
+    def test_tts_never_swallows_speech_when_no_audio_backend(self):
+        """Audio was synthesised and then dropped when pygame was missing:
+        no sound, no error, no console fallback."""
+        from modules import tts
+
+        manager = tts.TTSManager.__new__(tts.TTSManager)
+        manager.running = True
+        manager._speaking = __import__("threading").Event()
+        manager._engine_available = False
+        manager._engine = None
+
+        with mock.patch.object(manager, "_synthesize", return_value=(b"\x00\x01", "wav")), \
+             mock.patch.object(manager, "_play_pygame", return_value=False), \
+             mock.patch.object(manager, "_play_system", return_value=False), \
+             mock.patch.object(manager, "_play_pyttsx3_direct", return_value=False), \
+             mock.patch("builtins.print") as printed:
+            manager._deliver("important message", "eng")
+
+        self.assertTrue(
+            any("important message" in str(c) for c in printed.call_args_list),
+            "text must still reach the user when every audio backend fails",
+        )
+
+    def test_tts_module_exposes_shutdown_used_by_main(self):
+        """main.py called _modules['tts'].tts_manager.shutdown(); that
+        attribute never existed, so TTS was never shut down cleanly."""
+        from modules import tts
+
+        self.assertTrue(hasattr(tts, "shutdown"))
+        self.assertTrue(hasattr(tts, "flush"))
+        self.assertTrue(hasattr(tts, "wait_until_idle"))
+
+    def test_tts_mp3_uses_music_channel_not_sound(self):
+        """gTTS returns MP3; pygame.mixer.Sound cannot decode MP3 buffers."""
+        from modules import tts
+
+        if not tts.PYGAME_AVAILABLE:
+            self.skipTest("pygame not installed")
+        manager = tts._get_manager()
+        with mock.patch.object(tts, "pygame") as pg:
+            manager._play_pygame(b"fake-mp3", "mp3")
+            pg.mixer.music.load.assert_called_once()
+            pg.mixer.Sound.assert_not_called()
+
+    # ── Morse: word completion never fired ───────────────────────────────
+    def test_morse_emits_word_event_after_word_gap(self):
+        import modules.morse as morse
+
+        decoder = morse.MorseDecoder()
+        try:
+            decoder.add_dot()
+            decoder.add_dash()          # ".-" == A
+            events = []
+            deadline = time.time() + (morse.WORD_GAP_MS / 1000.0) + 2.0
+            while time.time() < deadline:
+                out = decoder.get_output(timeout=0.2)
+                if out:
+                    events.append(out)
+                if any(e[0] == "WORD" for e in events):
+                    break
+            self.assertIn(("LETTER", "A"), events)
+            self.assertTrue(any(e[0] == "WORD" for e in events),
+                            "WORD_GAP branch was unreachable before the fix")
+        finally:
+            decoder.shutdown()
+
+    # ── Embedder: batch cache-warm was a no-op ───────────────────────────
+    def test_embedder_batch_populates_cache(self):
+        import numpy as np
+        from services.embedder import Embedder
+
+        emb = Embedder.__new__(Embedder)
+        emb.use_gemini = False
+        emb.local_model = mock.Mock()
+        emb.local_model.encode.return_value = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        emb._model_lock = __import__("threading").Lock()
+        emb._cache = __import__("collections").OrderedDict()
+        emb._cache_size = 16
+        emb._cache_lock = __import__("threading").Lock()
+        emb._cache_hits = emb._cache_misses = 0
+        emb._init_local_model = lambda: None
+
+        emb.get_embeddings(["alpha", "beta"])
+        self.assertEqual(emb.cache_info["currsize"], 2,
+                         "batch results must land in the cache, not be recomputed")
+
+        emb._compute_embedding = mock.Mock(side_effect=AssertionError("recomputed a cached text"))
+        np.testing.assert_allclose(emb.get_embedding("alpha"), [1.0, 2.0])
+
+    def test_embedder_cache_is_bounded_and_per_instance(self):
+        import numpy as np
+        from services.embedder import Embedder
+
+        def make():
+            e = Embedder.__new__(Embedder)
+            e._cache = __import__("collections").OrderedDict()
+            e._cache_size = 2
+            e._cache_lock = __import__("threading").Lock()
+            e._cache_hits = e._cache_misses = 0
+            e._compute_embedding = lambda t: np.array([len(t)], dtype=np.float32)
+            return e
+
+        a, b = make(), make()
+        for key in ("x", "y", "z"):
+            a._cached_embedding(key)
+        self.assertEqual(a.cache_info["currsize"], 2, "cache must evict, not grow forever")
+        self.assertEqual(b.cache_info["currsize"], 0, "caches must not be shared between instances")
+
+    # ── RAG: duplicate index_file killed diagram descriptions ────────────
+    def test_rag_pipeline_describes_markdown_images(self):
+        from services.rag_pipeline import RAGPipeline
+
+        agent = mock.Mock()
+        agent.describe_image.return_value = "A labelled diagram of the water cycle."
+        pipeline = RAGPipeline(
+            embedder=mock.Mock(), vector_store=mock.Mock(),
+            retriever=mock.Mock(), gemini_agent=agent,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            try:
+                from PIL import Image
+                Image.new("RGB", (8, 8)).save(root / "fig1.png")
+            except Exception:
+                self.skipTest("Pillow unavailable")
+            (root / "chapter.md").write_text("Intro\n\n![Water cycle](fig1.png)\n\nEnd")
+
+            with mock.patch.object(pipeline, "index_document") as indexed:
+                self.assertTrue(pipeline.index_file(str(root / "chapter.md")))
+
+            content = indexed.call_args[0][0]
+            self.assertIn("water cycle", content.lower())
+            agent.describe_image.assert_called_once()
+
+    def test_rag_pipeline_ignores_remote_and_escaping_image_paths(self):
+        from services.rag_pipeline import RAGPipeline
+
+        agent = mock.Mock()
+        pipeline = RAGPipeline(
+            embedder=mock.Mock(), vector_store=mock.Mock(),
+            retriever=mock.Mock(), gemini_agent=agent,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            md = root / "chapter.md"
+            md.write_text("![a](https://evil.example/x.png)\n![b](../../../etc/passwd)")
+            pipeline._describe_markdown_images(md, md.read_text())
+            agent.describe_image.assert_not_called()
+
+    # ── main.py: blocking input() on a headless device ───────────────────
+    def test_keyboard_input_returns_default_without_tty(self):
+        main = importlib.import_module("main")
+
+        with mock.patch.object(main, "_STDIN_IS_TTY", False):
+            with mock.patch.object(builtins, "input",
+                                   side_effect=AssertionError("input() must not be called headless")):
+                self.assertEqual(main._keyboard_input("prompt: ", default="fallback"), "fallback")
+
+    def test_shutdown_uses_real_tts_api(self):
+        main = importlib.import_module("main")
+        tts_stub = mock.Mock()
+        main._shutdown_done = False
+        try:
+            with mock.patch.dict(main._modules, {"tts": tts_stub}):
+                main.shutdown()
+            tts_stub.wait_until_idle.assert_called_once()
+            tts_stub.shutdown.assert_called_once()
+        finally:
+            main._shutdown_done = False
+
+    # ── Object detection: no way out of Mode 6 ───────────────────────────
+    def test_object_detection_accepts_stop_event(self):
+        import inspect
+        from modules import object_detection
+
+        for fn in (object_detection.stream_detect, object_detection.run_detection):
+            self.assertIn("stop_event", inspect.signature(fn).parameters,
+                          f"{fn.__name__} needs a stop signal — Mode 6 trapped the device")
+
+    def test_object_detection_stops_when_callback_returns_false(self):
+        import numpy as np
+        from modules import object_detection
+
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+        cap = mock.Mock()
+        cap.isOpened.return_value = True
+        cap.read.return_value = (True, frame)
+
+        result = mock.Mock()
+        result.boxes = []
+        model = mock.Mock()
+        model.predict.return_value = [result]
+        model.names = {}
+
+        calls = []
+        with mock.patch.object(object_detection, "_get_model", return_value=model), \
+             mock.patch.object(object_detection.cv2, "VideoCapture", return_value=cap):
+            object_detection.stream_detect(
+                callback=lambda text, dets: calls.append(text) and False or False
+            )
+        self.assertEqual(len(calls), 1, "loop must exit on the first False from the callback")
+
+    # ── ai_query: timeouts that did not time out ─────────────────────────
+    def test_ask_ai_does_not_create_a_pool_per_call(self):
+        from modules import ai_query
+
+        self.assertIsInstance(ai_query._EXECUTOR,
+                              __import__("concurrent.futures", fromlist=["x"]).ThreadPoolExecutor)
+
+    def test_offline_fallback_returns_fast_when_unconfigured(self):
+        from modules import ai_query
+
+        with mock.patch.dict(ai_query._settings, {"offline_model_path": ""}, clear=False):
+            start = time.time()
+            self.assertIsNone(ai_query._ask_offline("hello"))
+        self.assertLess(time.time() - start, 1.0,
+                        "unconfigured offline model used to block for 60s")
+
+    def test_latency_narrator_flushes_stale_messages(self):
+        from modules.ai_query import LatencyNarrator
+
+        spoken, flushed = [], []
+        narrator = LatencyNarrator(
+            speak_fn=spoken.append, flush_fn=lambda: flushed.append(True),
+            first_delay=0.01, interval=0.01,
+        )
+        narrator.start()
+        time.sleep(0.2)
+        narrator.stop()
+
+        self.assertTrue(spoken, "narrator should have spoken")
+        self.assertTrue(flushed, "queued reassurance must be flushed before the answer")
+
+    def test_narrator_does_not_flush_when_it_never_spoke(self):
+        from modules.ai_query import LatencyNarrator
+
+        flushed = []
+        narrator = LatencyNarrator(
+            speak_fn=lambda m: None, flush_fn=lambda: flushed.append(True),
+            first_delay=30.0,
+        )
+        narrator.start()
+        narrator.stop()
+        self.assertEqual(flushed, [], "a fast answer must not have its speech flushed")
+
+    # ── confidential_mode: unimportable without pyserial ─────────────────
+    def test_confidential_mode_imports_without_pyserial(self):
+        with mock.patch.dict(sys.modules, {"serial": None}):
+            importlib.reload(importlib.import_module("modules.confidential_mode"))
+
+    # ── voice: hands-free capture ────────────────────────────────────────
+    def _run_listen_headless(self, tmpdir):
+        """Drive voice.listen() with no TTY and no real microphone, returning
+        the argv arecord was invoked with."""
+        from modules import voice
+
+        captured = {}
+
+        class FakeProc:
+            def __init__(self, cmd, **kw):
+                captured["cmd"] = cmd
+
+            def poll(self):
+                return 0
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 0
+
+        class FakeWave:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def getnframes(self):
+                return 16000
+
+            def readframes(self, n):
+                return b"\x00\x01" * n
+
+        fake_stdin = mock.Mock()
+        fake_stdin.isatty.return_value = False   # headless: no terminal
+
+        with mock.patch.object(voice, "VAD_AVAILABLE", False), \
+             mock.patch.object(voice, "RECORDING_DIR", tmpdir), \
+             mock.patch.object(voice.shutil, "which", return_value="/usr/bin/arecord"), \
+             mock.patch("subprocess.Popen", FakeProc), \
+             mock.patch.object(voice.wave, "open", return_value=FakeWave()), \
+             mock.patch.object(voice, "_multi_engine_transcribe", return_value="hello there"), \
+             mock.patch.object(voice.sys, "stdin", fake_stdin), \
+             mock.patch.object(builtins, "input",
+                               side_effect=AssertionError("listen() must not require a keypress")):
+            result = voice.listen("en-IN")
+
+        return result, captured["cmd"]
+
+    def test_voice_listen_is_hands_free(self):
+        """listen() used to call input('press ENTER to stop') and could not
+        return without a keypress — fatal on a keyboard-less device."""
+        with tempfile.TemporaryDirectory() as tmp:
+            result, cmd = self._run_listen_headless(tmp)
+
+        self.assertEqual(result, "hello there")
+        # The recording must be self-terminating (-d <seconds>).
+        self.assertIn("-d", cmd, "recording must have its own duration limit")
+
+    def test_voice_recording_target_is_configurable(self):
+        """Device and output path were hardcoded to one developer's machine
+        ('plughw:2,0' and the /mnt/aet_usb mount)."""
+        from modules import voice
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, cmd = self._run_listen_headless(tmp)
+
+        self.assertIn(voice.MIC_DEVICE, cmd)
+        self.assertTrue(any(str(tmp) in str(part) for part in cmd),
+                        "recordings must go to the configured directory")
+
+    def test_vad_capture_uses_configured_mic_index(self):
+        import inspect
+        from modules import voice
+
+        source = inspect.getsource(voice.listen_with_vad)
+        self.assertIn("input_device_index=MIC_INDEX", source)
+
+    def test_bandpass_filter_preserves_length_and_silence(self):
+        import numpy as np
+        from modules import voice
+
+        raw = (np.random.randn(16000) * 2000).astype("<i2").tobytes()
+        out = voice._bandpass_filter(raw, 16000)
+        self.assertEqual(len(out), len(raw))
+
+        silence = np.zeros(16000, dtype="<i2").tobytes()
+        self.assertEqual(
+            np.abs(np.frombuffer(voice._bandpass_filter(silence, 16000), dtype="<i2")).max(), 0
+        )
+
+    def test_prune_recordings_bounds_storage(self):
+        from modules import voice
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for i in range(10):
+                p = Path(tmp) / f"voice_{i}.wav"
+                p.write_bytes(b"x")
+                os.utime(p, (i, i))
+            voice._prune_recordings(tmp, keep=3)
+            self.assertEqual(len(list(Path(tmp).glob("voice_*.wav"))), 3)
 
 
 if __name__ == "__main__":

@@ -72,27 +72,34 @@ class MorseDecoder:
         logger.info("Morse decoder started with auto-timing.")
 
     def _timing_loop(self):
-        """Background thread: checks gaps and auto-decodes."""
+        """Background thread: checks gaps and auto-decodes.
+
+        FIX: the WORD branch was unreachable. The loop skipped every tick where
+        `self.sequence` was empty, but the LETTER branch (1.5s) always clears
+        the sequence — so by the time the 3s word gap elapsed there was never a
+        pending sequence left to trigger it, and a completed WORD event was
+        never emitted at all. The guard now also runs while a decoded word is
+        pending, and word completion is tracked from the last *decode*, not
+        just the last keypress.
+        """
         while self.running:
             time.sleep(0.05)  # 50ms check interval
-            
+
             with self.lock:
-                if not self.sequence:
+                if not self.sequence and not self.word:
                     continue
-                    
+
                 gap = (time.time() - self.last_symbol_time) * 1000
-                
-                if gap >= WORD_GAP_MS:
-                    # Word complete
+
+                if self.sequence and gap >= LETTER_GAP_MS:
                     self._decode_letter()
-                    if self.word:
-                        self.output_queue.put(("WORD", self.word))
-                        logger.info(f"Word complete: {self.word}")
-                        self.word = ""
-                        
-                elif gap >= LETTER_GAP_MS:
-                    # Letter complete
-                    self._decode_letter()
+
+                # Word boundary: no new symbol for WORD_GAP_MS and nothing
+                # half-typed. Checked independently of the letter branch.
+                if self.word and not self.sequence and gap >= WORD_GAP_MS:
+                    self.output_queue.put(("WORD", self.word))
+                    logger.info(f"Word complete: {self.word}")
+                    self.word = ""
 
     def _decode_letter(self):
         """Decode current sequence to letter."""

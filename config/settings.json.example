@@ -44,5 +44,29 @@
   "gesture_debounce_ms": 600,
   "gesture_cooldown_ms": 1500,
   "emotion_consecutive_threshold": 2,
-  "offline_model_path": "models/tinyllama-1.1b.Q4_K_M.gguf"
+  "offline_model_path": "models/tinyllama-1.1b.Q4_K_M.gguf",
+
+  "offline_model_preload": false,
+  "offline_load_timeout_s": 60,
+
+  "groq_timeout_s": 6.0,
+  "openai_timeout_s": 8.0,
+  "gemini_timeout_s": 10.0,
+  "ai_race_timeout_s": 10.0,
+
+  "mic_device": "default",
+  "mic_input_index": null,
+  "vad_aggressiveness": 2,
+  "voice_timeout_seconds": 8,
+  "voice_record_max_seconds": 8,
+  "voice_recording_dir": "data/recordings",
+  "voice_keep_recordings": 20,
+
+  "object_detection_camera_index": 0,
+  "object_detection_max_seconds": 120,
+  "yolo_imgsz": 640,
+
+  "privacy": {
+    "confidential_prompt_timeout_seconds": 8
+  }
 }

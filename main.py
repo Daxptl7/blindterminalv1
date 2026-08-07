@@ -59,6 +59,20 @@ logging.basicConfig(
 logger = logging.getLogger("MainController")
 _shutdown_done = False
 
+
+def _load_settings() -> dict:
+    """Orchestrator-level settings. Modules load their own; this is only for
+    behaviour main.py itself controls (mode time limits, etc.)."""
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Could not read settings.json ({e}); using defaults.")
+        return {}
+
+
+_settings = _load_settings()
+
 # ── SAFE IMPORTS ────────────────────────────────────────────
 # Each module is optional — app starts even if some are missing
 
@@ -107,12 +121,40 @@ except Exception as e:
 def _has(mod_name):
     return _modules.get(mod_name) is not None
 
-def _speak(text):
+def _speak(text, block=False):
     """Safe TTS — works even if tts module failed to load."""
     if _has("tts"):
-        _modules["tts"].speak(text)
+        _modules["tts"].speak(text, block=block)
     else:
         print(f"[TTS OFFLINE] {text}")
+
+
+def _flush_speech():
+    """Drop queued-but-unspoken audio (e.g. stale 'still working…' messages)."""
+    if _has("tts"):
+        try:
+            _modules["tts"].flush()
+        except Exception as e:
+            logger.debug(f"TTS flush failed: {e}")
+
+
+# ── HEADLESS-SAFE INPUT ─────────────────────────────────────
+# The production device is a headless Pi with no keyboard: stdin is not a TTY
+# and input() either blocks forever or raises. Several modes used to call
+# input() directly as a "fallback", which on real hardware meant the device
+# hung with no way out. Every keyboard read now goes through this guard.
+_STDIN_IS_TTY = sys.stdin is not None and sys.stdin.isatty()
+
+
+def _keyboard_input(prompt: str = "", default=None):
+    """Read a line from the keyboard, or return `default` when there is no TTY."""
+    if not _STDIN_IS_TTY:
+        logger.debug(f"Keyboard input skipped (no TTY): {prompt!r}")
+        return default
+    try:
+        return input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return default
 
 # ── MODE HANDLERS ───────────────────────────────────────────
 
@@ -214,15 +256,12 @@ def mode_ocr_scan():
                             response = spoken.lower()
             else:
                 # Keyboard fallback for laptop/development use
-                try:
-                    kb = input("[Y/N/1/2/Enter=Yes]: ").strip().lower()
-                    if kb in ("n", "no", "2"):
-                        response = "no"
-                except EOFError:
-                    response = "yes"
+                kb = (_keyboard_input("[Y/N/1/2/Enter=Yes]: ", default="") or "").lower()
+                if kb in ("n", "no", "2"):
+                    response = "no"
 
         except Exception as e:
-            print(f"\n[DEBUG] Mic/Button error: {e}\n")
+            logger.warning(f"Mic/Button error while asking for explanation: {e}")
 
         if response not in ("no", "n", "2"):
             _speak("Analyzing...")
@@ -230,7 +269,8 @@ def mode_ocr_scan():
                 answer = _modules["ai_query"].ask_ai(
                     "Explain this in simple terms for a visually impaired student:",
                     context=text,
-                    speak_fn=_speak
+                    speak_fn=_speak,
+                    flush_fn=_flush_speech,
                 )
                 _speak(answer)
             else:
@@ -291,7 +331,9 @@ def _morse_type_sentence(intro_message, timeout=90):
     else:
         _speak(intro_message + " Type it, then press Enter.")
         try:
-            text = input("Type: ").strip()
+            text = _keyboard_input("Type: ", default="")
+            if text is None:
+                return ""
         except EOFError:
             return ""
 
@@ -321,7 +363,9 @@ def mode_morse_type():
 
     _speak("Thinking...")
     if _has("ai_query"):
-        answer = _modules["ai_query"].ask_ai(question, speak_fn=_speak)
+        answer = _modules["ai_query"].ask_ai(
+            question, speak_fn=_speak, flush_fn=_flush_speech
+        )
         _speak(answer)
     else:
         _speak("AI module is not available.")
@@ -352,7 +396,9 @@ def mode_voice_ask():
 
     _speak("Thinking...")
     if _has("ai_query"):
-        answer = _modules["ai_query"].ask_ai(question, speak_fn=_speak)
+        answer = _modules["ai_query"].ask_ai(
+            question, speak_fn=_speak, flush_fn=_flush_speech
+        )
         _speak(answer)
     else:
         _speak("AI module is not available.")
@@ -435,16 +481,14 @@ def _get_button_or_voice_choice(options_map: dict, timeout: float = 8.0) -> str 
             logger.debug(f"Voice choice error: {e}")
 
     # ── 3. Keyboard fallback (headless Pi: skipped silently) ─────────────
-    try:
-        kb = input("Choice: ").strip()
+    kb = _keyboard_input("Choice: ", default=None)
+    if kb:
         if kb in valid_keys:
             return kb
         # Accept number words typed on keyboard too
         kb_lower = kb.lower()
         if kb_lower in spoken_vals:
             return spoken_vals[kb_lower]
-    except EOFError:
-        pass
 
     return None
 
@@ -495,9 +539,8 @@ def mode_translate():
     if input_choice == "1":
         # ── Type text on keyboard ──
         _speak("Type your text and press Enter.")
-        try:
-            text = input("Text: ").strip()
-        except EOFError:
+        text = _keyboard_input("Text: ", default=None)
+        if text is None:
             _speak("No input received.")
             return
         if not text:
@@ -530,9 +573,8 @@ def mode_translate():
             print("\nMorse Code keyboard entry:")
             print("  Letters: separate with space  (e.g. .... .)")
             print("  Words:   separate with  /     (e.g. .... . / .-- --- .-. .-.. -..)\n")
-            try:
-                raw_morse = input("Morse: ").strip()
-            except EOFError:
+            raw_morse = _keyboard_input("Morse: ", default=None)
+            if raw_morse is None:
                 _speak("No input received.")
                 return
             if not raw_morse:
@@ -677,22 +719,57 @@ def mode_object_detection():
         _speak("Object detection is not available.")
         return
 
-    _speak("Starting object detection. Point camera at objects. Press Q to stop.")
-    
+    # EXIT PATH (FIX): the old version told the user to "press Q", but Q is only
+    # read inside the OpenCV display window — and object_detection_display is
+    # false on the headless production device, so the loop never checked for it.
+    # With no max_frames and no stop signal, entering this mode trapped the
+    # device until Ctrl+C killed the whole application. There is now a real
+    # stop signal: Button 3 (or any button) on the Pico W, Enter on a keyboard,
+    # or an automatic time limit.
+    if _morse_serial_singleton is not None:
+        _speak("Starting object detection. Press any button to stop.")
+    else:
+        _speak("Starting object detection. Press Enter to stop.")
+
     from collections import Counter
     import time
-    
+
     last_speak_time = 0
     last_detected_classes = set()
+    stop_detection = threading.Event()
+    max_seconds = float(_settings.get("object_detection_max_seconds", 120))
+    started_at = time.time()
+
+    def _watch_for_stop():
+        """Background: set the stop flag on a button press or Enter key."""
+        while not stop_detection.is_set():
+            if _morse_serial_singleton is not None:
+                try:
+                    if _morse_serial_singleton.wait_for_raw_button(timeout=0.5) is not None:
+                        stop_detection.set()
+                        return
+                    continue
+                except Exception as e:
+                    logger.debug(f"Button read error while stopping detection: {e}")
+            if _STDIN_IS_TTY:
+                import select as _select
+                if _select.select([sys.stdin], [], [], 0.5)[0]:
+                    sys.stdin.readline()
+                    stop_detection.set()
+                    return
+            else:
+                time.sleep(0.5)
+
+    threading.Thread(target=_watch_for_stop, daemon=True).start()
 
     def detection_callback(text, detections):
         nonlocal last_speak_time, last_detected_classes
         now = time.time()
         current_classes = {d['name'] for d in detections}
-        
+
         # Detect if any new object types entered the camera view
         new_objects = current_classes - last_detected_classes
-        
+
         # Speak only if 3.5s passed OR a new object type is detected
         if (now - last_speak_time > 3.5 and current_classes) or new_objects:
             if current_classes:
@@ -702,11 +779,23 @@ def mode_object_detection():
             last_speak_time = now
             last_detected_classes = current_classes
 
+        # Hard time limit so the mode can never run away, even if every
+        # interactive stop path is unavailable.
+        if now - started_at > max_seconds:
+            stop_detection.set()
+
+        return not stop_detection.is_set()
+
     try:
-        _modules["objdetect"].run_detection(callback=detection_callback)
+        _modules["objdetect"].run_detection(
+            callback=detection_callback, stop_event=stop_detection
+        )
     except Exception as e:
         logger.error(f"Object detection error: {e}")
         _speak("Object detection error.")
+    finally:
+        stop_detection.set()
+        _speak("Object detection stopped.")
 
 def mode_gps():
     """Mode 7: GPS Navigation with 4-way input (Voice, Gesture, Morse/Button, Keyboard)"""
@@ -719,8 +808,41 @@ def mode_gps():
     import select
     import sys
     import threading
-    import modules.voice as voice
-    import modules.gesture_control as gesture
+
+    # Go through the safe-import registry rather than importing the modules
+    # directly: a missing optional dependency (mediapipe, PyAudio) must not
+    # take down GPS mode, which works fine on buttons and keyboard alone.
+    voice = _modules.get("voice")
+    gesture = _modules.get("gesture")
+
+    def _watch_gesture_in_background():
+        """Run one gesture-detection pass on a thread; report the first
+        recognised menu gesture. Returns a dict the caller polls cheaply."""
+        result = {"value": None}
+        if gesture is None:
+            return result
+
+        stop_event = threading.Event()
+
+        def _on_gesture(name):
+            if name == "MODE_SCAN":          # Open palm  -> Option 1
+                result["value"] = "1"
+            elif name in ("MODE_VOICE", "GPS_CHECK"):   # V-sign / 3 fingers -> Option 2
+                result["value"] = "2"
+            else:
+                return True                  # keep looking
+            stop_event.set()
+            return False                     # stop the detection loop
+
+        def _worker():
+            try:
+                gesture.detect_gesture(callback_fn=_on_gesture, stop_event=stop_event)
+            except Exception as e:
+                logger.warning(f"Gesture detection unavailable in GPS mode: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+        result["stop"] = stop_event
+        return result
 
     def _listen_in_background(lang="en-IN"):
         """
@@ -730,6 +852,9 @@ def mode_gps():
         result dict the caller can poll cheaply.
         """
         result = {"text": None, "done": False}
+        if voice is None:
+            result["done"] = True
+            return result
 
         def _worker():
             try:
@@ -753,12 +878,16 @@ def mode_gps():
 
     # Voice starts once in the background — never re-called inside the loop
     voice_result = _listen_in_background()
+    gesture_choice = _watch_gesture_in_background()
 
     # 2. Listen for all 4 inputs simultaneously for 10 seconds
     while time.time() - start_time < 10:
 
-        # A. Keyboard Input (Non-blocking)
-        if select.select([sys.stdin], [], [], 0.0)[0]:
+        # A. Keyboard Input (Non-blocking).
+        # Guarded on isatty(): under systemd stdin is not a terminal and
+        # select() reports it readable immediately at EOF, which spun this
+        # loop at 100% CPU for its whole duration.
+        if _STDIN_IS_TTY and select.select([sys.stdin], [], [], 0.0)[0]:
             line = sys.stdin.readline().strip()
             if line in ('1', '2'):
                 choice = line
@@ -786,20 +915,23 @@ def mode_gps():
             voice_result["text"] = None  # consumed; thread already finished
 
         # D. Gesture Input (Camera)
-        try:
-            gesture_cmd = gesture.get_current_gesture()
-            if gesture_cmd in ("MODE_SCAN",):             # High five / Scan -> Option 1
-                choice = '1'
-                break
-            elif gesture_cmd in ("MODE_VOICE", "PEACE"):   # Peace sign -> Option 2
-                choice = '2'
-                break
-        except AttributeError:
-            pass
-        except Exception as e:
-            logger.warning(f"Gesture read error in GPS mode: {e}")
+        # FIX: this used to call gesture.get_current_gesture(), which has never
+        # existed in gesture_control.py. Every call raised AttributeError and
+        # was swallowed by `except AttributeError: pass`, so the gesture input
+        # advertised for this mode was silently dead. gesture_control exposes a
+        # callback-driven loop, so it is now run once on a background thread
+        # and this loop just polls the result.
+        if gesture_choice["value"]:
+            choice = gesture_choice["value"]
+            break
 
         time.sleep(0.05)
+
+    # Always release the gesture camera before continuing, whether a gesture
+    # was used or not — otherwise the detection thread keeps the camera open
+    # for the rest of the session.
+    if gesture_choice.get("stop") is not None:
+        gesture_choice["stop"].set()
 
     # 3. Execute the chosen option
     if choice == '1':
@@ -821,7 +953,7 @@ def mode_gps():
         # Poll keyboard non-blocking while the voice thread runs in the background,
         # so typing doesn't have to wait for the mic to finish/timeout.
         while time.time() - dest_start < 18:  # covers voice.listen()'s worst case
-            if select.select([sys.stdin], [], [], 0.0)[0]:
+            if _STDIN_IS_TTY and select.select([sys.stdin], [], [], 0.0)[0]:
                 typed = sys.stdin.readline().strip()
                 if typed:
                     destination = typed
@@ -898,7 +1030,7 @@ def mode_math_solver():
         digit = _morse_serial_singleton.read_menu_digit(timeout=20)
         method = digit
     else:
-        method = input("1=voice, 2=type: ").strip()
+        method = _keyboard_input("1=voice, 2=type: ", default=None)
 
     problem = ""
     if method == '1':
@@ -922,7 +1054,9 @@ def mode_math_solver():
         return
 
     _speak("Solving...")
-    answer = _modules["ai_query"].ask_ai(MATH_SOLVER_PROMPT + problem, speak_fn=_speak)
+    answer = _modules["ai_query"].ask_ai(
+        MATH_SOLVER_PROMPT + problem, speak_fn=_speak, flush_fn=_flush_speech
+    )
     _speak(answer)
 
 # ── MAIN LOOP ───────────────────────────────────────────────
@@ -970,8 +1104,12 @@ def _get_menu_choice():
     if _morse_serial_singleton is not None:
         _speak("Tap a digit 1 through 9 to choose a mode, or 0 to shut down.")
         return _morse_serial_singleton.read_menu_digit(timeout=120)
-    else:
-        return input("Mode (1-9, 0=quit): ").strip()
+    return _keyboard_input("Mode (1-9, 0=quit): ", default=None)
+
+
+def _has_any_input_device() -> bool:
+    """True if the user can actually drive the menu at all."""
+    return _morse_serial_singleton is not None or _STDIN_IS_TTY
 
 def main():
     logger.info("=" * 50)
@@ -985,15 +1123,38 @@ def main():
 
     print(BANNER)
 
+    # Refuse to spin: with no Pico W and no terminal there is no way for the
+    # user to select anything, and the menu loop would otherwise busy-loop
+    # forever announcing "no selection received".
+    if not _has_any_input_device():
+        msg = ("No input device available: no Pico W buttons detected and no "
+               "terminal attached. Connect the buttons or run from a terminal.")
+        logger.error(msg)
+        _speak("No input device is connected. Please connect the buttons.")
+        shutdown()
+        return
+
     running = True
+    consecutive_empty = 0
     while running:
         try:
             print("\n" + "─" * 50)
             choice = _get_menu_choice()
 
             if choice is None:
+                consecutive_empty += 1
+                # Back off instead of hammering the TTS queue if input dies
+                # mid-session (e.g. the Pico W is unplugged).
+                if consecutive_empty >= 3:
+                    logger.error("No input received repeatedly — shutting down.")
+                    _speak("Input device not responding. Shutting down.")
+                    running = False
+                    continue
                 _speak("No selection received. Try again.")
+                time.sleep(1)
                 continue
+
+            consecutive_empty = 0
 
             if choice == '0':
                 # FIX: shutdown is destructive/irreversible, so it requires an
@@ -1004,7 +1165,7 @@ def main():
                     _speak("Shutdown requested. Double-press button 3 within 5 seconds to confirm, or wait to cancel.")
                     confirmed = _morse_serial_singleton.wait_for_confirm(timeout=5)
                 else:
-                    ans = input("Confirm shutdown? (y/n): ").strip().lower()
+                    ans = (_keyboard_input("Confirm shutdown? (y/n): ", default="") or "").lower()
                     confirmed = (ans == 'y')
 
                 if confirmed:
@@ -1035,10 +1196,19 @@ def shutdown():
     _shutdown_done = True
 
     logger.info("Shutting down...")
+    # FIX: this used to reference _modules["tts"].tts_manager, which does not
+    # exist (the module's singleton is the private _tts_manager). The getattr
+    # guard silently swallowed it, so the TTS worker and audio device were
+    # never released — and the fixed 1-second sleep cut the goodbye off
+    # mid-word. Now we wait for the queue to actually drain, then shut down
+    # through the module's public API.
     _speak("Goodbye. Shutting down Blind Assist.")
-    time.sleep(1)
-    if _has("tts") and getattr(_modules["tts"], "tts_manager", None) is not None:
-        _modules["tts"].tts_manager.shutdown()
+    if _has("tts"):
+        try:
+            _modules["tts"].wait_until_idle(timeout=10)
+            _modules["tts"].shutdown()
+        except Exception as e:
+            logger.warning(f"TTS shutdown error: {e}")
     if _morse_serial_singleton is not None:
         try:
             _morse_serial_singleton.close()

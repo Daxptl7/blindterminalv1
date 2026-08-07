@@ -140,13 +140,19 @@ class LatencyNarrator:
         messages: Optional[List[str]] = None,
         first_delay: float = LATENCY_FIRST_DELAY,
         interval: float = LATENCY_INTERVAL,
+        flush_fn: Optional[Callable] = None,
     ):
         self._speak_fn = speak_fn
         self._messages = messages or LATENCY_MESSAGES
         self._first_delay = first_delay
         self._interval = interval
+        # TTS is a FIFO queue, so reassurance messages queued while the AI was
+        # thinking would otherwise play *after* the answer is ready. flush_fn
+        # drops anything still pending the moment we stop narrating.
+        self._flush_fn = flush_fn
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._spoke_any = False
 
     def _narrate_loop(self):
         """Background thread: waits for first_delay, then speaks messages at interval."""
@@ -160,6 +166,7 @@ class LatencyNarrator:
             if self._speak_fn:
                 try:
                     self._speak_fn(message)
+                    self._spoke_any = True
                 except Exception as e:
                     logger.debug(f"Narrator speak error: {e}")
             else:
@@ -178,11 +185,20 @@ class LatencyNarrator:
         self._thread.start()
 
     def stop(self):
-        """Stop narration immediately. Safe to call multiple times."""
+        """Stop narration immediately and discard queued reassurance messages.
+
+        Safe to call multiple times.
+        """
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
         self._thread = None
+        if self._spoke_any and self._flush_fn:
+            try:
+                self._flush_fn()
+            except Exception as e:
+                logger.debug(f"Narrator flush error: {e}")
+        self._spoke_any = False
 
     def __enter__(self):
         self.start()
@@ -280,67 +296,104 @@ def _preload_offline_model():
     finally:
         _offline_loading.set()
 
-# Start preload in background immediately
-_preload_thread = threading.Thread(target=_preload_offline_model, daemon=True)
-#_preload_thread.start()
+# Offline model preload.
+#
+# The preload thread used to be created and then never started (the .start()
+# call was commented out), which left the _offline_loading event permanently
+# unset — so the offline fallback sat in `_offline_loading.wait(timeout=60)`
+# for a full minute before returning None. With no network that meant a
+# 60-second silence followed by an error, on every single question.
+#
+# Preloading is now opt-in via settings (it costs 20-30s of CPU and ~700MB of
+# RAM at startup), and _ask_offline starts the load on demand when it wasn't
+# preloaded, so the wait is never wasted.
+_preload_thread = None
+_preload_lock = threading.Lock()
+
+
+def _start_offline_preload():
+    """Start the offline model load once, in the background. Idempotent."""
+    global _preload_thread
+    with _preload_lock:
+        if _preload_thread is not None:
+            return
+        _preload_thread = threading.Thread(
+            target=_preload_offline_model, daemon=True, name="offline_preload"
+        )
+        _preload_thread.start()
+
+
+if _settings.get("offline_model_preload", False):
+    _start_offline_preload()
 
 # ── API CALLERS (with timeouts) ─────────────────────────────
 
-def _ask_groq(prompt: str, simplify: bool = False, timeout: float = 5.0) -> Optional[str]:
+# NOTE ON TIMEOUTS
+# The previous version wrapped each provider call in its own
+# `with ThreadPoolExecutor() as ex:` block and relied on
+# `future.result(timeout=N)` to bound it. That never worked: leaving the
+# `with` block calls shutdown(wait=True), which blocks until the HTTP call
+# finishes anyway — a measured "5 second timeout" still took the full call
+# duration. Timeouts are now enforced where they actually work: on the SDK
+# clients themselves (real socket timeouts that abort the request), with a
+# single top-level race in ask_ai().
+GROQ_TIMEOUT_S = float(_settings.get("groq_timeout_s", 6.0))
+OPENAI_TIMEOUT_S = float(_settings.get("openai_timeout_s", 8.0))
+GEMINI_TIMEOUT_S = float(_settings.get("gemini_timeout_s", 10.0))
+RACE_TIMEOUT_S = float(_settings.get("ai_race_timeout_s", 10.0))
+
+# One long-lived pool. Creating a pool per call leaked threads and made
+# every call pay pool setup/teardown.
+_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="ai_query"
+)
+
+
+def _ask_groq(prompt: str, simplify: bool = False, timeout: float = GROQ_TIMEOUT_S) -> Optional[str]:
     if not _init_groq():
         return None
     try:
         system = SYSTEM_PROMPT
         if simplify:
             system += " Use very simple words."
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                _groq_client.chat.completions.create,
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=200,
-                temperature=0.7,
-            )
-            response = future.result(timeout=timeout)
-            return response.choices[0].message.content.strip()
-    except concurrent.futures.TimeoutError:
-        logger.warning("Groq timeout.")
-        return None
+        response = _groq_client.with_options(timeout=timeout).chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"Groq error: {e}")
+        logger.warning(f"Groq unavailable: {e}")
         return None
 
-def _ask_openai(prompt: str, simplify: bool = False, timeout: float = 8.0) -> Optional[str]:
+
+def _ask_openai(prompt: str, simplify: bool = False, timeout: float = OPENAI_TIMEOUT_S) -> Optional[str]:
     if not _init_openai():
         return None
     try:
         system = SYSTEM_PROMPT
         if simplify:
             system += " Use very simple words."
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                _openai_client.chat.completions.create,
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=200,
-                temperature=0.7,
-            )
-            response = future.result(timeout=timeout)
-            return response.choices[0].message.content.strip()
-    except concurrent.futures.TimeoutError:
-        logger.warning("OpenAI timeout.")
-        return None
+        response = _openai_client.with_options(timeout=timeout).chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"OpenAI error: {e}")
+        logger.warning(f"OpenAI unavailable: {e}")
         return None
 
-def _ask_gemini(prompt: str, simplify: bool = False, timeout: float = 10.0) -> Optional[str]:
+
+def _ask_gemini(prompt: str, simplify: bool = False, timeout: float = GEMINI_TIMEOUT_S) -> Optional[str]:
     if not _init_gemini():
         return None
     try:
@@ -349,30 +402,34 @@ def _ask_gemini(prompt: str, simplify: bool = False, timeout: float = 10.0) -> O
         system = SYSTEM_PROMPT
         if simplify:
             system += " Use very simple words."
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                _gemini_client.models.generate_content,
-                model=_gemini_model_name,
-                contents=full,
-                config=types.GenerateContentConfig(
-                    system_instruction=system
-                )
-            )
-            response = future.result(timeout=timeout)
-            return response.text.strip() if response and response.text else None
-    except concurrent.futures.TimeoutError:
-        logger.warning("Gemini timeout.")
-        return None
+        response = _gemini_client.models.generate_content(
+            model=_gemini_model_name,
+            contents=full,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                # google-genai takes request timeouts in milliseconds.
+                http_options=types.HttpOptions(timeout=int(timeout * 1000)),
+            ),
+        )
+        return response.text.strip() if response and response.text else None
     except Exception as e:
-        logger.error(f"Gemini error: {e}")
+        logger.warning(f"Gemini unavailable: {e}")
         return None
 
 def _ask_offline(prompt: str, simplify: bool = False) -> Optional[str]:
     global _offline_ready
-    _offline_loading.wait(timeout=60)  # Wait for preload (or fail fast)
+
+    # Nothing configured — return immediately instead of waiting on a load
+    # that will never happen.
+    if not _settings.get("offline_model_path"):
+        return None
+
+    _start_offline_preload()          # no-op if already loading/loaded
+    _offline_loading.wait(timeout=float(_settings.get("offline_load_timeout_s", 60)))
     if not _offline_ready or _offline_model is None:
         return None
-    
+
+
     try:
         model_path = _settings.get("offline_model_path", "").lower()
         if "qwen" in model_path:
@@ -408,7 +465,8 @@ def _ask_offline(prompt: str, simplify: bool = False) -> Optional[str]:
 # ── PUBLIC API ──────────────────────────────────────────────
 
 def ask_ai(prompt: str, context: str = '', simplify: bool = False,
-           speak_fn: Optional[Callable] = None) -> str:
+           speak_fn: Optional[Callable] = None,
+           flush_fn: Optional[Callable] = None) -> str:
     """
     Concurrent AI query with fastest-response-wins strategy.
     Tries Groq + OpenAI simultaneously, uses whichever answers first.
@@ -421,6 +479,9 @@ def ask_ai(prompt: str, context: str = '', simplify: bool = False,
                   is being processed", "Still working on it"). This prevents
                   blind users from thinking the device has frozen during
                   high-latency API calls.
+        flush_fn: Optional TTS flush function. Called when narration stops so
+                  reassurance messages still sitting in the speech queue are
+                  dropped instead of playing after the answer.
     """
     if not prompt or not prompt.strip():
         return "I didn't receive a question. Please try again."
@@ -441,36 +502,30 @@ def ask_ai(prompt: str, context: str = '', simplify: bool = False,
     logger.info(f"Query: \"{prompt[:50]}...\"")
 
     # Start the latency narrator — speaks periodic updates while AI processes
-    narrator = LatencyNarrator(speak_fn=speak_fn)
+    narrator = LatencyNarrator(speak_fn=speak_fn, flush_fn=flush_fn)
     narrator.start()
 
     try:
-        # Phase 1: Race Groq vs OpenAI (fastest wins)
-        results = {}
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        # Phase 1: Race Groq vs OpenAI (fastest valid answer wins).
+        # The pool is module-level and is never shut down here, so a slow
+        # loser can finish in the background instead of blocking the winner.
+        futures = {
+            _EXECUTOR.submit(_ask_groq, full_prompt, simplify): 'groq',
+            _EXECUTOR.submit(_ask_openai, full_prompt, simplify): 'openai',
+        }
         try:
-            futures = {
-                executor.submit(_ask_groq, full_prompt, simplify): 'groq',
-                executor.submit(_ask_openai, full_prompt, simplify): 'openai',
-            }
-            try:
-                for future in concurrent.futures.as_completed(futures, timeout=10):
-                    source = futures[future]
-                    try:
-                        result = future.result()
-                        if result:
-                            results[source] = result
-                            logger.info(f"First response from {source}")
-                            break  # First valid answer wins
-                    except Exception as e:
-                        logger.debug(f"{source} returned no answer: {e}")
-            except concurrent.futures.TimeoutError:
-                logger.warning("Timed out waiting for fast AI providers.")
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
-
-        if results:
-            return list(results.values())[0]
+            for future in concurrent.futures.as_completed(futures, timeout=RACE_TIMEOUT_S):
+                source = futures[future]
+                try:
+                    result = future.result()
+                except Exception as e:
+                    logger.debug(f"{source} returned no answer: {e}")
+                    continue
+                if result:
+                    logger.info(f"First response from {source}")
+                    return result
+        except concurrent.futures.TimeoutError:
+            logger.warning("Timed out waiting for fast AI providers.")
 
         # Phase 2: Try Gemini
         result = _ask_gemini(full_prompt, simplify)

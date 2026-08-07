@@ -24,11 +24,26 @@ FIXES IN THIS VERSION
    further changes.
 """
 
+import logging
 import time
 
 from modules.config_loader import load_settings
-from modules.morse_serial import MorseSerial
 from modules import tts
+
+logger = logging.getLogger("ConfidentialMode")
+
+# MorseSerial pulls in pyserial, which is absent on any machine without the
+# Pico W toolchain installed. Importing it at module scope made THIS ENTIRE
+# MODULE fail to import ("No module named 'serial'"), so main.py's safe-import
+# marked privacy as unavailable and Confidential Mode — the feature that keeps
+# a blind user's private documents from being read aloud in public — silently
+# did nothing. It is only needed as a type hint and for the standalone test,
+# so the import is now optional.
+try:
+    from modules.morse_serial import MorseSerial
+except Exception as e:  # pragma: no cover - depends on host hardware/deps
+    MorseSerial = None
+    logger.info(f"Pico W buttons unavailable in confidential mode ({e}); using voice prompt.")
 
 settings = load_settings()
 
@@ -81,7 +96,7 @@ def _interpret_privacy_voice(spoken):
     return None
 
 
-def ask_confidentiality(morse_serial: MorseSerial = None):
+def ask_confidentiality(morse_serial=None):
     """
     Asks the privacy question via earphones ONLY, then waits for Button 1
     (private) / Button 2 (speaker). If nobody presses a button in time,
@@ -119,18 +134,18 @@ def ask_confidentiality(morse_serial: MorseSerial = None):
         if decision:
             return decision
     except Exception as e:
-        print(f"[DEBUG] Voice fallback for privacy prompt failed: {e}")
+        logger.warning(f"Voice fallback for privacy prompt failed: {e}")
 
     # Nobody answered by button or voice — safe default is NORMAL.
     return "NORMAL"
 
 
 # Alias — main.py's standalone demo mode (Mode 8) calls ask_privacy().
-def ask_privacy(morse_serial: MorseSerial = None):
+def ask_privacy(morse_serial=None):
     return ask_confidentiality(morse_serial)
 
 
-def speak_with_privacy_check(text, lang_code, morse_serial: MorseSerial = None):
+def speak_with_privacy_check(text, lang_code, morse_serial=None):
     """Asks confidential/public, then speaks `text` through the correct
     audio path only — nothing is read aloud before the choice is made."""
     mode = ask_confidentiality(morse_serial)
@@ -149,7 +164,9 @@ if __name__ == "__main__":
     print(" BlindAssist Confidential Mode — Dual USB Test")
     print("==================================================")
 
-    ms = MorseSerial()
+    ms = MorseSerial() if MorseSerial is not None else None
+    if ms is None:
+        print("(No Pico W detected — the prompt will use the microphone.)")
     try:
         while True:
             print("\nPress Enter for privacy prompt (or type QUIT): ", end="")
@@ -170,5 +187,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
-        ms.close()
+        if ms is not None:
+            ms.close()
         print("\nConfidential Mode Closed.")

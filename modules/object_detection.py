@@ -32,8 +32,10 @@ def _load_settings() -> dict:
 _settings = _load_settings()
 
 CONFIDENCE = float(_settings.get("yolo_confidence", 0.75))
-INFER_SIZE = 640
-CAMERA_INDEX = 0
+INFER_SIZE = int(_settings.get("yolo_imgsz", 640))
+# Configurable so it can be pointed away from the OCR camera on the Pi, the
+# same way gesture_camera_index already is.
+CAMERA_INDEX = int(_settings.get("object_detection_camera_index", 0))
 
 DISPLAY_WINDOW = bool(_settings.get("object_detection_display", False))
 
@@ -93,24 +95,48 @@ def preprocess(frame: np.ndarray) -> np.ndarray:
 
 
 # ── STREAMING INFERENCE ─────────────────────────────────────
-def stream_detect(source=0, callback=None, max_frames=None):
+def stream_detect(source=0, callback=None, max_frames=None, stop_event=None):
     """
     Streaming object detection.
     Reads frames from capture and runs YOLOv8 inference.
+
+    Stopping (previously impossible on a headless device — see main.py Mode 6):
+      - set `stop_event` from another thread, or
+      - return False from `callback`, or
+      - pass `max_frames`, or
+      - press Q, but only when object_detection_display is enabled.
     """
     model = _get_model()
-    
-    # ADDED V4L2 FLAG HERE
-    cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
-    
+
+    # CAP_V4L2 is a Linux-only backend; requesting it on macOS/Windows makes
+    # VideoCapture fail to open at all, so only ask for it where it exists.
+    if hasattr(cv2, "CAP_V4L2") and sys.platform.startswith("linux"):
+        cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
+    else:
+        cap = cv2.VideoCapture(source)
+
+    if not cap.isOpened():
+        cap.release()
+        logger.error(f"Object detection camera failed to open (source={source}).")
+        raise RuntimeError("Camera not available for object detection.")
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    # Discard warmup frames so auto-exposure settles before the first
+    # announcement (the same convention ocr.py and gesture_control.py use).
+    for _ in range(5):
+        cap.read()
 
     logger.info(f"Streaming detection active (display={DISPLAY_WINDOW})")
 
     frame_count = 0
     try:
         while cap.isOpened():
+            if stop_event is not None and stop_event.is_set():
+                logger.info("Object detection stopped by stop_event.")
+                break
+
             ret, frame = cap.read()
             if not ret:
                 break
@@ -162,7 +188,11 @@ def stream_detect(source=0, callback=None, max_frames=None):
                     break
 
             if callback:
-                callback(text, detections)
+                # A callback returning False means "stop" — same convention as
+                # gesture_control.detect_gesture.
+                if callback(text, detections) is False:
+                    logger.info("Object detection stopped by callback.")
+                    break
 
             frame_count += 1
             if max_frames is not None and frame_count >= max_frames:
@@ -171,7 +201,10 @@ def stream_detect(source=0, callback=None, max_frames=None):
     finally:
         cap.release()
         if DISPLAY_WINDOW:
-            cv2.destroyAllWindows()
+            try:
+                cv2.destroyAllWindows()
+            except cv2.error:
+                pass
 
 
 # ── SINGLE SCAN API ─────────────────────────────────────────
@@ -196,12 +229,17 @@ def scan_frame(frame: np.ndarray) -> str:
     return "I see: " + ", ".join(descriptions)
 
 
-def run_detection(callback=None, max_frames=None):
+def run_detection(callback=None, max_frames=None, stop_event=None):
     """
     Legacy API wrapper used by main.py's Mode 6.
     """
-    print("Object Detection running (press Ctrl+C to stop early)...")
-    stream_detect(callback=callback, max_frames=max_frames)
+    logger.info("Object detection starting.")
+    stream_detect(
+        source=CAMERA_INDEX,
+        callback=callback,
+        max_frames=max_frames,
+        stop_event=stop_event,
+    )
 
 if __name__ == '__main__':
     import time
