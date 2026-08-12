@@ -117,6 +117,18 @@ except Exception as e:
     logger.warning(f"Pico W Morse buttons unavailable, using keyboard fallback: {e}")
     _morse_serial_singleton = None
 
+# Hand the Pico connection to voice.py so it reads buttons through this one
+# reader instead of opening /dev/ttyACM0 a second time. Two readers on the
+# same port steal messages from each other's queue — and voice.py's own
+# attempt would simply fail here, because main.py already holds the port.
+# Without this, voice.py's confidentiality prompt can never see Button 1 or 2
+# and every answer would fall through to its timeout default.
+if _morse_serial_singleton is not None and _modules.get("voice") is not None:
+    try:
+        _modules["voice"].set_morse_serial(_morse_serial_singleton)
+    except Exception as e:
+        logger.warning(f"Could not share the button connection with voice.py: {e}")
+
 # Helper to check if module is available
 def _has(mod_name):
     return _modules.get(mod_name) is not None
@@ -136,6 +148,159 @@ def _flush_speech():
             _modules["tts"].flush()
         except Exception as e:
             logger.debug(f"TTS flush failed: {e}")
+
+
+def _listen(lang: str = "en-IN", announce: bool = False):
+    """Capture one utterance. Returns text or None, never raises.
+
+    Every voice call site used to swallow exceptions and then say the same
+    "I didn't catch that" regardless of cause — so a missing microphone, a
+    dead internet connection and genuine mishearing were indistinguishable to
+    a user who cannot read the logs. voice.get_last_error() gives a reason
+    written to be spoken aloud; _speak_voice_failure() delivers it.
+    """
+    if not _has("voice"):
+        return None
+
+    # Let the speaker finish before opening the microphone. tts.speak() is a
+    # non-blocking queue, so every "Ask your question now" prompt was still
+    # playing when capture started — the device recorded its own voice, the
+    # VAD triggered on it, and the AI was asked to answer the prompt it had
+    # just spoken. This is why voice input appeared to "hear the wrong thing"
+    # even when the microphone was working perfectly.
+    if _has("tts"):
+        try:
+            _modules["tts"].wait_until_idle(timeout=15)
+        except Exception as e:
+            logger.debug(f"Could not wait for TTS to drain: {e}")
+
+    try:
+        return _modules["voice"].listen(lang, speak_fn=_speak if announce else None)
+    except Exception as e:
+        logger.warning(f"Voice capture error: {e}")
+        return None
+
+
+# How many presses of Button 3 end an open-ended recording, and how long the
+# user may take between them. Three presses (rather than one) so that a stray
+# knock against the button cannot cut a question short.
+_STOP_PRESSES = int(_settings.get("voice_stop_press_count", 3))
+_STOP_PRESS_WINDOW_S = float(_settings.get("voice_stop_press_window_seconds", 4.0))
+
+
+def _button3_stop_signal():
+    """Watch Button 3 in the background; return (stop_check, cancel).
+
+    stop_check() is polled by voice.listen() and returns True once Button 3 has
+    been pressed _STOP_PRESSES times in a row, each within
+    _STOP_PRESS_WINDOW_S of the last. cancel() stops the watcher thread.
+
+    Only presses of Button 3 count. The Pico firmware emits RAW:3 on every
+    press of it and follows up with WORD_SPACE or CONFIRM once it has decided
+    whether the press was single or double — those follow-ups are ignored here,
+    so a triple press registers as exactly three RAW:3 messages regardless of
+    how the firmware classifies the gesture.
+
+    Returns (None, no-op) when no Pico W is attached, so callers degrade to the
+    keyboard/backstop path instead of recording into a recording that nothing
+    can end.
+    """
+    serial = _morse_serial_singleton      # bound once: one reader, one queue
+    if serial is None:
+        return None, (lambda: None)
+
+    stopped = threading.Event()
+    finished = threading.Event()
+
+    def _watch():
+        presses = 0
+        last_press = 0.0
+        while not finished.is_set():
+            try:
+                msg = serial.get_message(timeout=0.3)
+            except Exception as e:
+                logger.debug(f"Button read error while recording: {e}")
+                time.sleep(0.3)
+                continue
+            if msg is None:
+                continue
+
+            now = time.time()
+            if msg.startswith("RAW:3"):
+                presses = presses + 1 if (now - last_press) <= _STOP_PRESS_WINDOW_S else 1
+            elif msg == "CONFIRM":
+                # The firmware only emits CONFIRM when it has decided two
+                # presses were a double-press, and while it is making that
+                # decision it stops scanning the pins — so one of the two
+                # presses may never have reached us as a RAW:3. Treat CONFIRM
+                # as proof that two presses happened, otherwise a user who taps
+                # quickly could press four or five times and never reach three.
+                presses = max(presses, 2)
+            else:
+                continue
+
+            last_press = now
+            logger.info(f"Stop button press {presses} of {_STOP_PRESSES}")
+            if presses >= _STOP_PRESSES:
+                stopped.set()
+                return
+
+    watcher = threading.Thread(target=_watch, daemon=True)
+    watcher.start()
+
+    def _cancel():
+        finished.set()
+
+    return stopped.is_set, _cancel
+
+
+def _listen_until_stopped(lang: str = "en-IN", prompt: str | None = None):
+    """Record for as long as the user needs, ending on three Button 3 presses.
+
+    The 8-second phrase cap was cutting people off mid-question in every mode
+    where they compose a sentence. Those modes now call this instead: the
+    recording runs until the user signals they are done (or, with no buttons
+    attached, until ENTER on a terminal / the safety backstop in voice.py).
+    """
+    if not _has("voice"):
+        return None
+
+    stop_check, cancel = _button3_stop_signal()
+
+    if prompt:
+        _speak(prompt)
+    if stop_check is not None:
+        _speak(f"Take as long as you need. Press button 3 "
+               f"{_STOP_PRESSES} times when you are finished.", block=True)
+    elif _STDIN_IS_TTY:
+        _speak("Take as long as you need. Press Enter when you are finished.", block=True)
+
+    # Let the speaker finish before the microphone opens — otherwise the device
+    # records its own prompt and tries to answer it.
+    if _has("tts"):
+        try:
+            _modules["tts"].wait_until_idle(timeout=15)
+        except Exception as e:
+            logger.debug(f"Could not wait for TTS to drain: {e}")
+
+    try:
+        return _modules["voice"].listen(lang, stop_check=stop_check, manual_stop=True)
+    except Exception as e:
+        logger.warning(f"Voice capture error: {e}")
+        return None
+    finally:
+        cancel()
+
+
+def _speak_voice_failure(default: str = "I didn't catch that. Please try again."):
+    """Explain the most recent listen() failure in the user's own words."""
+    reason = None
+    if _has("voice"):
+        try:
+            reason = _modules["voice"].get_last_error()
+        except Exception:
+            reason = None
+    _speak(reason or default)
 
 
 # ── HEADLESS-SAFE INPUT ─────────────────────────────────────
@@ -250,10 +415,9 @@ def mode_ocr_scan():
                     response = "no"
                 else:
                     # 2. No button pressed — try the microphone
-                    if _has("voice"):
-                        spoken = _modules["voice"].listen("en-IN")
-                        if spoken:
-                            response = spoken.lower()
+                    spoken = _listen("en-IN")
+                    if spoken:
+                        response = spoken.lower()
             else:
                 # Keyboard fallback for laptop/development use
                 kb = (_keyboard_input("[Y/N/1/2/Enter=Yes]: ", default="") or "").lower()
@@ -373,16 +537,15 @@ def mode_morse_type():
 def mode_voice_ask():
     """Mode 3: Voice → AI → TTS"""
     logger.info("Mode 3: Voice Ask")
-    
+
     if not _has("voice"):
         _speak("Voice recognition is not available.")
         return
 
-    _speak("Voice mode. Ask your question now.")
-    question = _modules["voice"].listen(lang='en-IN')
+    question = _listen_until_stopped("en-IN", prompt="Voice mode. Ask your question now.")
 
     if not question:
-        _speak("I didn't catch that. Please try again.")
+        _speak_voice_failure()
         return
 
     _speak(f"You asked: {question}")
@@ -396,10 +559,15 @@ def mode_voice_ask():
 
     _speak("Thinking...")
     if _has("ai_query"):
-        answer = _modules["ai_query"].ask_ai(
+        # ask_ai_and_speak() asks — on the speaker — whether the answer is
+        # confidential, then reads it out on the earphone (Button 1) or the
+        # speaker (Button 2, or after the timeout). It speaks the answer
+        # itself, so there must be no _speak(answer) here: that would play
+        # the whole answer a second time, on the wrong device, immediately
+        # after the user has just chosen where to hear it.
+        _modules["ai_query"].ask_ai_and_speak(
             question, speak_fn=_speak, flush_fn=_flush_speech
         )
-        _speak(answer)
     else:
         _speak("AI module is not available.")
 
@@ -459,7 +627,7 @@ def _get_button_or_voice_choice(options_map: dict, timeout: float = 8.0) -> str 
     # ── 2. Microphone fallback ────────────────────────────────────────────
     if _has("voice"):
         try:
-            spoken = _modules["voice"].listen("en-IN")
+            spoken = _listen("en-IN")
             if spoken:
                 spoken_lower = spoken.lower().strip()
                 # Direct key match  ("1", "2" etc spoken as a word)
@@ -597,14 +765,9 @@ def mode_translate():
         if not _has("voice"):
             _speak("Voice module is not available. Please use option 1 instead.")
             return
-        _speak("Speak your text now.")
-        try:
-            text = _modules["voice"].listen("en-IN")
-        except Exception as e:
-            logger.warning(f"Voice listen error in translate: {e}")
-            text = None
+        text = _listen_until_stopped("en-IN", prompt="Speak your text now.")
         if not text:
-            _speak("I did not catch anything. Please try again.")
+            _speak_voice_failure("I did not catch anything. Please try again.")
             return
         _speak(f"I heard: {text}")
 
@@ -671,7 +834,7 @@ def mode_translate():
 def mode_gesture():
     """Mode 5: Gesture control"""
     logger.info("Mode 5: Gesture")
-    
+
     if not _has("gesture"):
         _speak("Gesture control is not available.")
         return
@@ -699,7 +862,7 @@ def mode_gesture():
     running = True
     while running:
         _modules["gesture"].detect_gesture(callback_fn=on_gesture, stop_event=stop_gesture)
-        
+
         if active_action == "MODE_SCAN":
             active_action = None
             mode_ocr_scan()
@@ -714,7 +877,7 @@ def mode_gesture():
 def mode_object_detection():
     """Mode 6: Object detection"""
     logger.info("Mode 6: Object Detection")
-    
+
     if not _has("objdetect"):
         _speak("Object detection is not available.")
         return
@@ -858,7 +1021,10 @@ def mode_gps():
 
         def _worker():
             try:
-                spoken = voice.listen(lang)
+                # _listen() drains the speech queue first, so this thread does
+                # not open the microphone while the menu prompt is still
+                # playing out of the speaker.
+                spoken = _listen(lang)
                 result["text"] = spoken.lower() if spoken else None
             except Exception as e:
                 logger.warning(f"Voice read error in GPS mode: {e}")
@@ -880,8 +1046,14 @@ def mode_gps():
     voice_result = _listen_in_background()
     gesture_choice = _watch_gesture_in_background()
 
-    # 2. Listen for all 4 inputs simultaneously for 10 seconds
-    while time.time() - start_time < 10:
+    # 2. Listen for all 4 inputs simultaneously.
+    # The window has to outlast a full voice attempt (speech-queue drain +
+    # 6s to start speaking + 8s phrase + transcription), or the advertised
+    # "say 'where am I'" option can never win the race — the old 10s budget
+    # expired while the recogniser was still working. Buttons, keyboard and
+    # gestures still break out immediately, so this only affects a user who
+    # does nothing at all.
+    while time.time() - start_time < 25:
 
         # A. Keyboard Input (Non-blocking).
         # Guarded on isatty(): under systemd stdin is not a terminal and
@@ -952,7 +1124,7 @@ def mode_gps():
 
         # Poll keyboard non-blocking while the voice thread runs in the background,
         # so typing doesn't have to wait for the mic to finish/timeout.
-        while time.time() - dest_start < 18:  # covers voice.listen()'s worst case
+        while time.time() - dest_start < 25:  # covers voice.listen()'s worst case
             if _STDIN_IS_TTY and select.select([sys.stdin], [], [], 0.0)[0]:
                 typed = sys.stdin.readline().strip()
                 if typed:
@@ -1035,8 +1207,10 @@ def mode_math_solver():
     problem = ""
     if method == '1':
         if _has("voice"):
-            _speak("Speak your math problem now.")
-            problem = _modules["voice"].listen()
+            problem = _listen_until_stopped("en-IN", prompt="Speak your math problem now.")
+            if not problem:
+                _speak_voice_failure()
+                return
         else:
             _speak("Voice module is not available.")
             return

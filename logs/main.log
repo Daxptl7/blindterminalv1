@@ -2637,3 +2637,856 @@ HARRY POTER..."
 2026-07-28 23:28:45,150 [ERROR] gTTS failed (Check Wi-Fi): No module named 'gtts'. Falling back to offline engine.
 2026-07-28 23:28:45,172 [ERROR] Playback error: Unrecognized file type (not AIFF nor 8SVX)
 2026-07-28 23:28:45,520 [INFO] Camera released.
+2026-08-09 22:55:34,071 [INFO] pygame.mixer initialised on default device.
+2026-08-09 22:55:34,081 [INFO] Module loaded: tts
+2026-08-09 22:55:34,093 [INFO] WebRTC VAD initialized.
+2026-08-09 22:55:34,094 [INFO] Vosk not installed. Install with: pip install vosk
+2026-08-09 22:55:34,095 [INFO] Module loaded: voice
+2026-08-09 22:55:34,107 [INFO] Module loaded: ai_query
+2026-08-09 22:55:34,111 [INFO] Morse decoder started with auto-timing.
+2026-08-09 22:55:34,112 [INFO] Module loaded: morse
+2026-08-09 22:55:34,118 [INFO] Module loaded: ocr
+2026-08-09 22:55:34,120 [INFO] Module loaded: translator
+2026-08-09 22:55:34,120 [INFO] Module loaded: gesture_control
+2026-08-09 22:55:34,124 [INFO] Module loaded: emotion_engine
+2026-08-09 22:55:34,126 [INFO] Module loaded: gps_navigator
+2026-08-09 22:55:34,134 [INFO] Module loaded: confidential_mode
+2026-08-09 22:55:34,144 [INFO] Module loaded: object_detection
+2026-08-09 22:55:34,147 [INFO] Pico W Morse buttons connected.
+2026-08-09 22:55:34,148 [INFO] Mode 2: Morse Type
+2026-08-09 22:57:04,169 [WARNING] Gemini OCR unavailable, falling back to local OCR: network down
+2026-08-09 22:57:06,959 [ERROR] Unsupported file type for indexing: .bin
+2026-08-09 22:57:06,976 [WARNING] Embedding dimension changed from 3 to 4. Dropping incompatible local vectors; re-index documents for best RAG results.
+2026-08-09 22:57:06,977 [WARNING] Query embedding dimension 3 does not match vector store dimension 4. Re-index documents with the current embedding model.
+2026-08-09 22:57:06,978 [WARNING] Ignoring legacy metadata.pkl because pickle can execute code. Set BLINDASSIST_TRUST_LEGACY_PICKLE=1 once to migrate a trusted local store.
+2026-08-09 22:57:12,409 [WARNING] Skipping image outside document directory: ../../../etc/passwd
+2026-08-09 23:45:42,292 [INFO] pygame.mixer initialised on default device.
+2026-08-09 23:45:42,304 [INFO] Module loaded: tts
+2026-08-09 23:45:42,650 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-09 23:45:42,651 [INFO] STT engines active: vosk -> google
+2026-08-09 23:45:42,652 [INFO] Module loaded: voice
+2026-08-09 23:45:42,657 [INFO] Module loaded: ai_query
+2026-08-09 23:45:42,659 [INFO] Morse decoder started with auto-timing.
+2026-08-09 23:45:42,660 [INFO] Module loaded: morse
+2026-08-09 23:45:42,716 [INFO] Module loaded: ocr
+2026-08-09 23:45:42,718 [INFO] Module loaded: translator
+2026-08-09 23:45:43,324 [INFO] Module loaded: gesture_control
+2026-08-09 23:45:43,326 [INFO] Module loaded: emotion_engine
+2026-08-09 23:45:43,327 [INFO] Module loaded: gps_navigator
+2026-08-09 23:45:43,330 [INFO] Module loaded: confidential_mode
+2026-08-09 23:45:43,332 [INFO] Module loaded: object_detection
+2026-08-09 23:45:43,334 [INFO] Pico W Morse buttons connected.
+2026-08-09 23:45:43,334 [INFO] ==================================================
+2026-08-09 23:45:43,335 [INFO] BlindAssist Starting...
+2026-08-09 23:45:43,335 [INFO] ==================================================
+2026-08-09 23:45:43,340 [INFO] TTS Manager ready.
+2026-08-09 23:45:43,341 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-09 23:45:49,178 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-09 23:47:43,342 [INFO] Speaking: "No selection received. Try again."
+2026-08-09 23:47:47,204 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-09 23:49:15,514 [INFO] Mode 3: Voice Ask
+2026-08-09 23:49:15,516 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-09 23:49:19,442 [INFO] VAD listening at 48000 Hz (start window 6s, phrase max 8s)
+2026-08-09 23:49:19,536 [INFO] Speech detected.
+2026-08-09 23:49:20,256 [INFO] Speech ended.
+2026-08-09 23:49:20,258 [INFO] VAD captured 0.8s at -36 dBFS
+2026-08-09 23:49:20,273 [INFO] Level -36 dBFS -> -30 dBFS after gain
+2026-08-09 23:49:22,161 [INFO] Google could not understand the audio.
+2026-08-09 23:49:22,883 [INFO] Google could not understand the audio.
+2026-08-09 23:49:22,898 [INFO] VAD listening at 48000 Hz (start window 6s, phrase max 8s)
+2026-08-09 23:49:28,913 [INFO] VAD capture unusable (no speech detected); falling back to timed recording.
+2026-08-09 23:49:28,918 [INFO] Recording 8s via arecord (device=default)
+2026-08-09 23:49:29,120 [WARNING] arecord failed on default: arecord: main:850: audio open error: Invalid argument
+2026-08-09 23:49:29,121 [INFO] Recording 8s via arecord (device=plughw:2,0)
+2026-08-09 23:49:37,334 [INFO] Captured 8.0s at -42 dBFS from plughw:2,0
+2026-08-09 23:49:37,337 [INFO] Level -42 dBFS -> -26 dBFS after gain
+2026-08-09 23:49:40,538 [INFO] Google could not understand the audio.
+2026-08-09 23:49:43,869 [INFO] Google could not understand the audio.
+2026-08-09 23:49:43,870 [WARNING] All 2 listen attempt(s) failed.
+2026-08-09 23:49:43,871 [INFO] Speaking: "I didn't catch that. Please try again."
+2026-08-09 23:49:47,838 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-09 23:50:01,797 [INFO] Shutting down...
+2026-08-09 23:50:01,798 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-10 00:07:04,381 [INFO] pygame.mixer initialised on default device.
+2026-08-10 00:07:04,383 [INFO] Module loaded: tts
+2026-08-10 00:07:04,727 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 00:07:04,728 [INFO] STT engines active: vosk -> google
+2026-08-10 00:07:04,729 [INFO] Module loaded: voice
+2026-08-10 00:07:04,734 [INFO] Module loaded: ai_query
+2026-08-10 00:07:04,735 [INFO] Morse decoder started with auto-timing.
+2026-08-10 00:07:04,736 [INFO] Module loaded: morse
+2026-08-10 00:07:04,791 [INFO] Module loaded: ocr
+2026-08-10 00:07:04,792 [INFO] Module loaded: translator
+2026-08-10 00:07:05,400 [INFO] Module loaded: gesture_control
+2026-08-10 00:07:05,402 [INFO] Module loaded: emotion_engine
+2026-08-10 00:07:05,403 [INFO] Module loaded: gps_navigator
+2026-08-10 00:07:05,406 [INFO] Module loaded: confidential_mode
+2026-08-10 00:07:05,407 [INFO] Module loaded: object_detection
+2026-08-10 00:07:05,408 [INFO] Pico W Morse buttons connected.
+2026-08-10 00:07:05,909 [INFO] Stop button press 1 of 3
+2026-08-10 00:07:06,309 [INFO] Stop button press 2 of 3
+2026-08-10 00:07:06,710 [INFO] Stop button press 1 of 3
+2026-08-10 00:07:07,110 [INFO] Stop button press 1 of 3
+2026-08-10 00:07:08,010 [INFO] Stop button press 1 of 3
+2026-08-10 00:07:08,910 [INFO] Stop button press 1 of 3
+2026-08-10 00:07:08,910 [INFO] Stop button press 1 of 3
+2026-08-10 00:08:19,392 [INFO] pygame.mixer initialised on default device.
+2026-08-10 00:08:19,395 [INFO] Module loaded: tts
+2026-08-10 00:08:19,742 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 00:08:19,743 [INFO] STT engines active: vosk -> google
+2026-08-10 00:08:19,744 [INFO] Module loaded: voice
+2026-08-10 00:08:19,749 [INFO] Module loaded: ai_query
+2026-08-10 00:08:19,750 [INFO] Morse decoder started with auto-timing.
+2026-08-10 00:08:19,751 [INFO] Module loaded: morse
+2026-08-10 00:08:19,807 [INFO] Module loaded: ocr
+2026-08-10 00:08:19,808 [INFO] Module loaded: translator
+2026-08-10 00:08:20,412 [INFO] Module loaded: gesture_control
+2026-08-10 00:08:20,413 [INFO] Module loaded: emotion_engine
+2026-08-10 00:08:20,414 [INFO] Module loaded: gps_navigator
+2026-08-10 00:08:20,418 [INFO] Module loaded: confidential_mode
+2026-08-10 00:08:20,419 [INFO] Module loaded: object_detection
+2026-08-10 00:08:20,421 [INFO] Pico W Morse buttons connected.
+2026-08-10 00:10:12,397 [INFO] pygame.mixer initialised on default device.
+2026-08-10 00:10:12,399 [INFO] Module loaded: tts
+2026-08-10 00:10:12,774 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 00:10:12,775 [INFO] STT engines active: vosk -> google
+2026-08-10 00:10:12,776 [INFO] Module loaded: voice
+2026-08-10 00:10:12,781 [INFO] Module loaded: ai_query
+2026-08-10 00:10:12,782 [INFO] Morse decoder started with auto-timing.
+2026-08-10 00:10:12,783 [INFO] Module loaded: morse
+2026-08-10 00:10:12,784 [INFO] Module loaded: ocr
+2026-08-10 00:10:12,784 [INFO] Module loaded: translator
+2026-08-10 00:10:12,785 [INFO] Module loaded: gesture_control
+2026-08-10 00:10:12,785 [INFO] Module loaded: emotion_engine
+2026-08-10 00:10:12,786 [INFO] Module loaded: gps_navigator
+2026-08-10 00:10:12,789 [INFO] Module loaded: confidential_mode
+2026-08-10 00:10:12,790 [INFO] Module loaded: object_detection
+2026-08-10 00:10:12,792 [INFO] Pico W Morse buttons connected.
+2026-08-10 00:10:12,793 [INFO] Mode 2: Morse Type
+2026-08-10 00:11:42,817 [WARNING] Gemini OCR unavailable, falling back to local OCR: network down
+2026-08-10 00:11:45,642 [ERROR] Unsupported file type for indexing: .bin
+2026-08-10 00:11:45,658 [WARNING] Embedding dimension changed from 3 to 4. Dropping incompatible local vectors; re-index documents for best RAG results.
+2026-08-10 00:11:45,659 [WARNING] Query embedding dimension 3 does not match vector store dimension 4. Re-index documents with the current embedding model.
+2026-08-10 00:11:45,660 [WARNING] Ignoring legacy metadata.pkl because pickle can execute code. Set BLINDASSIST_TRUST_LEGACY_PICKLE=1 once to migrate a trusted local store.
+2026-08-10 00:11:48,972 [WARNING] Skipping image outside document directory: ../../../etc/passwd
+2026-08-10 00:17:15,445 [INFO] pygame.mixer initialised on default device.
+2026-08-10 00:17:15,458 [INFO] Module loaded: tts
+2026-08-10 00:17:16,715 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 00:17:16,716 [INFO] STT engines active: vosk -> google
+2026-08-10 00:17:16,737 [INFO] Module loaded: voice
+2026-08-10 00:17:16,744 [INFO] Module loaded: ai_query
+2026-08-10 00:17:16,746 [INFO] Morse decoder started with auto-timing.
+2026-08-10 00:17:16,747 [INFO] Module loaded: morse
+2026-08-10 00:17:17,768 [INFO] Module loaded: ocr
+2026-08-10 00:17:17,769 [INFO] Module loaded: translator
+2026-08-10 00:17:19,020 [INFO] Module loaded: gesture_control
+2026-08-10 00:17:19,022 [INFO] Module loaded: emotion_engine
+2026-08-10 00:17:19,024 [INFO] Module loaded: gps_navigator
+2026-08-10 00:17:19,033 [INFO] Module loaded: confidential_mode
+2026-08-10 00:17:19,043 [INFO] Module loaded: object_detection
+2026-08-10 00:17:19,046 [INFO] Pico W Morse buttons connected.
+2026-08-10 00:17:19,046 [INFO] ==================================================
+2026-08-10 00:17:19,047 [INFO] BlindAssist Starting...
+2026-08-10 00:17:19,048 [INFO] ==================================================
+2026-08-10 00:17:19,151 [INFO] TTS Manager ready.
+2026-08-10 00:17:19,152 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-10 00:17:25,538 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 00:17:41,242 [INFO] Mode 2: Morse Type
+2026-08-10 00:17:41,243 [INFO] Speaking: "Type your question on the buttons."
+2026-08-10 00:17:44,276 [INFO] Speaking: "Single-press button 3 for a space, double-press to send, lon"
+2026-08-10 00:18:16,933 [INFO] Speaking: "No question received."
+2026-08-10 00:18:19,149 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 00:18:27,369 [INFO] Mode 3: Voice Ask
+2026-08-10 00:18:27,371 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 00:18:30,965 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 00:18:37,778 [INFO] Open-ended recording at 48000 Hz (stops on user signal, backstop 180s)
+2026-08-10 00:18:41,269 [INFO] Stop button press 1 of 3
+2026-08-10 00:18:41,632 [INFO] Stop button press 2 of 3
+2026-08-10 00:18:41,654 [INFO] Stop button press 2 of 3
+2026-08-10 00:18:42,012 [INFO] Stop button press 3 of 3
+2026-08-10 00:18:42,038 [INFO] Manual stop received; ending recording.
+2026-08-10 00:18:42,042 [INFO] Recorded 4.3s at -42 dBFS
+2026-08-10 00:18:42,056 [INFO] Input looks dead: crest 6.9 dB, modulation 0.9 dB — steady hum, no microphone.
+2026-08-10 00:18:42,077 [WARNING] Capture failed: microphone captured only hum
+2026-08-10 00:18:42,078 [INFO] Speaking: "I didn't hear anything. If this keeps happening, check that "
+2026-08-10 00:18:49,740 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 00:19:56,323 [INFO] Shutting down...
+2026-08-10 00:19:56,324 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-10 12:36:03,106 [ERROR] Bone device 'plughw:2,0' from settings.json does not exist on this machine (available: plughw:0,0, plughw:1,0, plughw:3,0, plughw:4,0). Falling back to 'plughw:1,0' — fix bone_device in settings.json.
+2026-08-10 12:36:04,544 [INFO] pygame.mixer initialised on default device.
+2026-08-10 12:36:04,546 [INFO] Module loaded: tts
+2026-08-10 12:36:05,747 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 12:36:05,749 [INFO] STT engines active: vosk -> google
+2026-08-10 12:36:05,751 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-10 12:36:05,779 [INFO] Module loaded: voice
+2026-08-10 12:36:05,787 [INFO] Module loaded: ai_query
+2026-08-10 12:36:05,789 [INFO] Morse decoder started with auto-timing.
+2026-08-10 12:36:05,790 [INFO] Module loaded: morse
+2026-08-10 12:36:06,765 [INFO] Module loaded: ocr
+2026-08-10 12:36:06,767 [INFO] Module loaded: translator
+2026-08-10 12:36:08,023 [INFO] Module loaded: gesture_control
+2026-08-10 12:36:08,025 [INFO] Module loaded: emotion_engine
+2026-08-10 12:36:08,027 [INFO] Module loaded: gps_navigator
+2026-08-10 12:36:08,037 [INFO] Module loaded: confidential_mode
+2026-08-10 12:36:08,070 [INFO] Module loaded: object_detection
+2026-08-10 12:36:08,073 [INFO] Pico W Morse buttons connected.
+2026-08-10 12:36:08,073 [INFO] ==================================================
+2026-08-10 12:36:08,074 [INFO] BlindAssist Starting...
+2026-08-10 12:36:08,074 [INFO] ==================================================
+2026-08-10 12:36:08,200 [INFO] TTS Manager ready.
+2026-08-10 12:36:08,201 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-10 12:36:14,642 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 12:37:36,136 [INFO] Mode 3: Voice Ask
+2026-08-10 12:37:36,137 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 12:37:39,726 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 12:37:46,031 [INFO] Recording from plughw:4,0 (backstop 180s, buttons live)
+2026-08-10 12:37:54,764 [INFO] Stop button press 1 of 3
+2026-08-10 12:37:55,056 [INFO] Stop button press 2 of 3
+2026-08-10 12:37:55,077 [INFO] Stop button press 2 of 3
+2026-08-10 12:37:55,339 [INFO] Stop button press 3 of 3
+2026-08-10 12:37:55,360 [INFO] Recording ended by button 3 (caller).
+2026-08-10 12:37:55,362 [INFO] Captured 9.0s at -41 dBFS
+2026-08-10 12:37:55,365 [INFO] Saved /mnt/aet_usb/recordings/voice_20260810_123755.wav (9.0s)
+2026-08-10 12:37:55,369 [INFO] Level -41 dBFS -> -20 dBFS after gain
+2026-08-10 12:38:00,171 [INFO] Google could not understand the audio.
+2026-08-10 12:38:02,652 [INFO] Google could not understand the audio.
+2026-08-10 12:38:02,653 [INFO] Speaking: "I didn't catch that. Please try again."
+2026-08-10 12:38:06,848 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 12:38:17,258 [INFO] Mode 3: Voice Ask
+2026-08-10 12:38:17,259 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 12:38:21,182 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 12:38:28,001 [INFO] Recording from plughw:4,0 (backstop 180s, buttons live)
+2026-08-10 12:38:34,807 [INFO] Stop button press 1 of 3
+2026-08-10 12:38:35,055 [INFO] Stop button press 2 of 3
+2026-08-10 12:38:35,075 [INFO] Stop button press 2 of 3
+2026-08-10 12:38:35,262 [INFO] Stop button press 3 of 3
+2026-08-10 12:38:35,381 [INFO] Recording ended by button 3 (caller).
+2026-08-10 12:38:35,383 [INFO] Captured 7.0s at -41 dBFS
+2026-08-10 12:38:35,385 [INFO] Saved /mnt/aet_usb/recordings/voice_20260810_123835.wav (7.0s)
+2026-08-10 12:38:35,388 [INFO] Level -41 dBFS -> -20 dBFS after gain
+2026-08-10 12:38:38,066 [INFO] Google could not understand the audio.
+2026-08-10 12:38:40,764 [INFO] Google could not understand the audio.
+2026-08-10 12:38:40,765 [INFO] Speaking: "I didn't catch that. Please try again."
+2026-08-10 12:38:44,947 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 12:40:36,750 [INFO] Shutting down...
+2026-08-10 12:40:36,752 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-10 12:40:40,951 [INFO] TTS Manager shut down.
+2026-08-10 12:40:40,953 [INFO] Shutdown complete.
+2026-08-10 12:49:34,834 [ERROR] Bone device 'plughw:2,0' from settings.json does not exist on this machine (available: plughw:0,0, plughw:1,0, plughw:3,0, plughw:4,0). Falling back to 'plughw:1,0' — fix bone_device in settings.json.
+2026-08-10 12:49:35,154 [INFO] pygame.mixer initialised on default device.
+2026-08-10 12:49:35,156 [INFO] Module loaded: tts
+2026-08-10 12:49:35,514 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 12:49:35,516 [INFO] STT engines active: vosk -> google
+2026-08-10 12:49:35,517 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-10 12:49:35,532 [INFO] Module loaded: voice
+2026-08-10 12:49:35,537 [INFO] Module loaded: ai_query
+2026-08-10 12:49:35,539 [INFO] Morse decoder started with auto-timing.
+2026-08-10 12:49:35,540 [INFO] Module loaded: morse
+2026-08-10 12:49:35,596 [INFO] Module loaded: ocr
+2026-08-10 12:49:35,597 [INFO] Module loaded: translator
+2026-08-10 12:49:36,195 [INFO] Module loaded: gesture_control
+2026-08-10 12:49:36,196 [INFO] Module loaded: emotion_engine
+2026-08-10 12:49:36,198 [INFO] Module loaded: gps_navigator
+2026-08-10 12:49:36,201 [INFO] Module loaded: confidential_mode
+2026-08-10 12:49:36,202 [INFO] Module loaded: object_detection
+2026-08-10 12:49:36,204 [INFO] Pico W Morse buttons connected.
+2026-08-10 12:49:36,205 [INFO] ==================================================
+2026-08-10 12:49:36,205 [INFO] BlindAssist Starting...
+2026-08-10 12:49:36,206 [INFO] ==================================================
+2026-08-10 12:49:36,211 [INFO] TTS Manager ready.
+2026-08-10 12:49:36,212 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-10 12:49:42,206 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 12:49:56,020 [INFO] Mode 3: Voice Ask
+2026-08-10 12:49:56,022 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 12:50:00,125 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 12:50:07,247 [INFO] Recording from plughw:4,0 (backstop 180s, buttons live)
+2026-08-10 12:50:10,428 [INFO] Stop button press 1 of 3
+2026-08-10 12:50:10,725 [INFO] Stop button press 2 of 3
+2026-08-10 12:50:10,747 [INFO] Stop button press 2 of 3
+2026-08-10 12:50:11,098 [INFO] Stop button press 3 of 3
+2026-08-10 12:50:11,172 [INFO] Recording ended by button 3 (caller).
+2026-08-10 12:50:11,173 [INFO] Captured 3.6s at -43 dBFS
+2026-08-10 12:50:11,176 [INFO] Saved /mnt/aet_usb/recordings/voice_20260810_125011.wav (3.6s)
+2026-08-10 12:50:11,178 [INFO] Level -43 dBFS -> -35 dBFS after gain
+2026-08-10 12:50:13,327 [INFO] Google could not understand the audio.
+2026-08-10 12:50:14,332 [INFO] Google could not understand the audio.
+2026-08-10 12:50:14,333 [INFO] Speaking: "I didn't catch that. Please try again."
+2026-08-10 12:50:18,473 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 12:51:15,496 [INFO] Shutting down...
+2026-08-10 12:51:15,497 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-10 12:51:19,896 [INFO] TTS Manager shut down.
+2026-08-10 12:51:19,898 [INFO] Shutdown complete.
+2026-08-10 13:02:04,752 [ERROR] Bone device 'plughw:2,0' from settings.json does not exist on this machine (available: plughw:0,0, plughw:1,0, plughw:3,0, plughw:4,0). Falling back to 'plughw:1,0' — fix bone_device in settings.json.
+2026-08-10 13:02:05,074 [INFO] pygame.mixer initialised on default device.
+2026-08-10 13:02:05,076 [INFO] Module loaded: tts
+2026-08-10 13:02:05,418 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 13:02:05,419 [INFO] STT engines active: vosk -> google
+2026-08-10 13:02:05,420 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-10 13:02:05,435 [INFO] Module loaded: voice
+2026-08-10 13:02:05,445 [INFO] Module loaded: ai_query
+2026-08-10 13:02:05,447 [INFO] Morse decoder started with auto-timing.
+2026-08-10 13:02:05,448 [INFO] Module loaded: morse
+2026-08-10 13:02:05,504 [INFO] Module loaded: ocr
+2026-08-10 13:02:05,505 [INFO] Module loaded: translator
+2026-08-10 13:02:06,115 [INFO] Module loaded: gesture_control
+2026-08-10 13:02:06,117 [INFO] Module loaded: emotion_engine
+2026-08-10 13:02:06,118 [INFO] Module loaded: gps_navigator
+2026-08-10 13:02:06,122 [INFO] Module loaded: confidential_mode
+2026-08-10 13:02:06,123 [INFO] Module loaded: object_detection
+2026-08-10 13:02:06,125 [INFO] Pico W Morse buttons connected.
+2026-08-10 13:02:06,126 [INFO] ==================================================
+2026-08-10 13:02:06,127 [INFO] BlindAssist Starting...
+2026-08-10 13:02:06,127 [INFO] ==================================================
+2026-08-10 13:02:06,132 [INFO] TTS Manager ready.
+2026-08-10 13:02:06,133 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-10 13:02:12,015 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 13:02:16,404 [INFO] Mode 3: Voice Ask
+2026-08-10 13:02:18,326 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 13:02:21,995 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 13:02:28,648 [INFO] Recording from plughw:4,0 (backstop 180s, buttons live)
+2026-08-10 13:02:32,667 [INFO] Stop button press 1 of 3
+2026-08-10 13:02:32,976 [INFO] Stop button press 2 of 3
+2026-08-10 13:02:32,997 [INFO] Stop button press 2 of 3
+2026-08-10 13:02:33,370 [INFO] Stop button press 3 of 3
+2026-08-10 13:02:33,485 [INFO] Recording ended by button 3 (caller).
+2026-08-10 13:02:33,487 [INFO] Captured 4.5s at -42 dBFS
+2026-08-10 13:02:33,489 [INFO] Saved /mnt/aet_usb/recordings/voice_20260810_130233.wav (4.5s)
+2026-08-10 13:02:33,492 [INFO] Level -42 dBFS -> -34 dBFS after gain
+2026-08-10 13:02:36,608 [INFO] Google could not understand the audio.
+2026-08-10 13:02:38,804 [INFO] Google could not understand the audio.
+2026-08-10 13:02:38,805 [INFO] Speaking: "I didn't catch that. Please try again."
+2026-08-10 13:02:43,074 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 13:04:19,391 [INFO] Shutting down...
+2026-08-10 13:04:19,392 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-10 13:04:23,392 [INFO] TTS Manager shut down.
+2026-08-10 13:04:23,394 [INFO] Shutdown complete.
+2026-08-10 14:35:09,374 [INFO] pygame.mixer initialised on default device.
+2026-08-10 14:35:09,384 [INFO] Module loaded: tts
+2026-08-10 14:35:09,721 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 14:35:09,723 [INFO] STT engines active: vosk -> google
+2026-08-10 14:35:09,724 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-10 14:35:09,739 [INFO] Module loaded: voice
+2026-08-10 14:35:09,751 [INFO] Module loaded: ai_query
+2026-08-10 14:35:09,764 [INFO] Morse decoder started with auto-timing.
+2026-08-10 14:35:09,766 [INFO] Module loaded: morse
+2026-08-10 14:35:10,670 [INFO] Preloading offline model (this may take 20-30s)...
+2026-08-10 14:35:10,830 [INFO] Module loaded: ocr
+2026-08-10 14:35:10,832 [INFO] Module loaded: translator
+2026-08-10 14:35:12,185 [INFO] Module loaded: gesture_control
+2026-08-10 14:35:12,187 [INFO] Module loaded: emotion_engine
+2026-08-10 14:35:12,189 [INFO] Module loaded: gps_navigator
+2026-08-10 14:35:12,193 [INFO] Module loaded: confidential_mode
+2026-08-10 14:35:12,206 [INFO] Module loaded: object_detection
+2026-08-10 14:35:12,208 [INFO] Pico W Morse buttons connected.
+2026-08-10 14:35:12,208 [INFO] ==================================================
+2026-08-10 14:35:12,209 [INFO] BlindAssist Starting...
+2026-08-10 14:35:12,210 [INFO] ==================================================
+2026-08-10 14:35:12,218 [INFO] TTS Manager ready.
+2026-08-10 14:35:12,219 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-10 14:35:18,174 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 14:35:26,096 [INFO] Mode 3: Voice Ask
+2026-08-10 14:35:26,098 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 14:35:29,907 [INFO] Offline model ready in 19.2s
+2026-08-10 14:35:30,209 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 14:35:36,653 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-10 14:35:46,541 [INFO] Stop button press 1 of 3
+2026-08-10 14:35:46,820 [INFO] Stop button press 2 of 3
+2026-08-10 14:35:46,840 [INFO] Stop button press 2 of 3
+2026-08-10 14:35:47,103 [INFO] Stop button press 3 of 3
+2026-08-10 14:35:47,177 [INFO] Recording ended by button 3 (caller).
+2026-08-10 14:35:47,180 [INFO] Captured 10.2s at -6 dBFS
+2026-08-10 14:35:47,182 [INFO] Saved /mnt/aet_usb/recordings/voice_20260810_143547.wav (10.2s)
+2026-08-10 14:35:47,186 [INFO] Level -6 dBFS -> -6 dBFS after gain
+2026-08-10 14:35:49,325 [INFO] Vosk transcribed: 'doctors system'
+2026-08-10 14:35:49,335 [INFO] Final transcription: 'doctors system'
+2026-08-10 14:35:49,337 [INFO] Voice: doctors system
+2026-08-10 14:35:49,337 [INFO] Speaking: "You asked: doctors system"
+2026-08-10 14:35:49,337 [ERROR] Mode 3 error: ask_ai() got an unexpected keyword argument 'speak_fn'
+2026-08-10 14:35:52,780 [INFO] Speaking: "Thinking..."
+2026-08-10 14:35:54,440 [INFO] Speaking: "An error occurred. Returning to menu."
+2026-08-10 14:35:57,979 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 14:36:10,562 [INFO] Shutting down...
+2026-08-10 14:36:10,563 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-10 14:36:14,511 [INFO] TTS Manager shut down.
+2026-08-10 14:36:14,513 [INFO] Shutdown complete.
+2026-08-10 14:54:28,535 [INFO] pygame.mixer initialised on default device.
+2026-08-10 14:54:28,537 [INFO] Module loaded: tts
+2026-08-10 14:54:28,875 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 14:54:28,876 [INFO] STT engines active: vosk -> google
+2026-08-10 14:54:28,877 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-10 14:54:28,893 [INFO] Module loaded: voice
+2026-08-10 14:54:28,902 [INFO] Module loaded: ai_query
+2026-08-10 14:54:28,904 [INFO] Morse decoder started with auto-timing.
+2026-08-10 14:54:28,905 [INFO] Module loaded: morse
+2026-08-10 14:54:28,961 [INFO] Module loaded: ocr
+2026-08-10 14:54:28,962 [INFO] Module loaded: translator
+2026-08-10 14:54:29,565 [INFO] Module loaded: gesture_control
+2026-08-10 14:54:29,566 [INFO] Module loaded: emotion_engine
+2026-08-10 14:54:29,567 [INFO] Module loaded: gps_navigator
+2026-08-10 14:54:29,571 [INFO] Module loaded: confidential_mode
+2026-08-10 14:54:29,572 [INFO] Module loaded: object_detection
+2026-08-10 14:54:29,574 [INFO] Pico W Morse buttons connected.
+2026-08-10 14:54:29,575 [INFO] ==================================================
+2026-08-10 14:54:29,575 [INFO] BlindAssist Starting...
+2026-08-10 14:54:29,576 [INFO] ==================================================
+2026-08-10 14:54:29,581 [INFO] TTS Manager ready.
+2026-08-10 14:54:29,582 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-10 14:54:36,051 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 14:54:38,123 [INFO] Mode 3: Voice Ask
+2026-08-10 14:54:42,404 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 14:54:46,590 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 14:54:52,744 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-10 14:55:00,244 [INFO] Stop button press 1 of 3
+2026-08-10 14:55:00,498 [INFO] Stop button press 2 of 3
+2026-08-10 14:55:00,519 [INFO] Stop button press 2 of 3
+2026-08-10 14:55:00,777 [INFO] Stop button press 3 of 3
+2026-08-10 14:55:00,866 [INFO] Recording ended by button 3 (caller).
+2026-08-10 14:55:00,868 [INFO] Captured 7.8s at -7 dBFS
+2026-08-10 14:55:00,870 [INFO] Saved /mnt/aet_usb/recordings/voice_20260810_145500.wav (7.8s)
+2026-08-10 14:55:00,874 [INFO] Level -7 dBFS -> -7 dBFS after gain
+2026-08-10 14:55:03,116 [INFO] Vosk transcribed: 'productive system explain me about it'
+2026-08-10 14:55:03,132 [INFO] Final transcription: 'productive system explain me about it'
+2026-08-10 14:55:03,133 [INFO] Voice: productive system explain me about it
+2026-08-10 14:55:03,133 [INFO] Speaking: "You asked: productive system explain me about it"
+2026-08-10 15:35:36,237 [INFO] pygame.mixer initialised on default device.
+2026-08-10 15:35:36,239 [INFO] Module loaded: tts
+2026-08-10 15:35:36,580 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-10 15:35:36,581 [INFO] STT engines active: vosk -> google
+2026-08-10 15:35:36,582 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-10 15:35:36,598 [INFO] Module loaded: voice
+2026-08-10 15:35:36,609 [INFO] Module loaded: ai_query
+2026-08-10 15:35:36,611 [INFO] Morse decoder started with auto-timing.
+2026-08-10 15:35:36,612 [INFO] Module loaded: morse
+2026-08-10 15:35:36,667 [INFO] Module loaded: ocr
+2026-08-10 15:35:36,668 [INFO] Module loaded: translator
+2026-08-10 15:35:37,267 [INFO] Module loaded: gesture_control
+2026-08-10 15:35:37,269 [INFO] Module loaded: emotion_engine
+2026-08-10 15:35:37,271 [INFO] Module loaded: gps_navigator
+2026-08-10 15:35:37,275 [INFO] Module loaded: confidential_mode
+2026-08-10 15:35:37,276 [INFO] Module loaded: object_detection
+2026-08-10 15:35:37,278 [INFO] Pico W Morse buttons connected.
+2026-08-10 15:35:37,279 [INFO] Using the caller's Morse serial connection.
+2026-08-10 15:35:37,279 [INFO] ==================================================
+2026-08-10 15:35:37,280 [INFO] BlindAssist Starting...
+2026-08-10 15:35:37,280 [INFO] ==================================================
+2026-08-10 15:35:37,285 [INFO] TTS Manager ready.
+2026-08-10 15:35:37,286 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-10 15:35:43,167 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-10 15:35:47,967 [INFO] Mode 3: Voice Ask
+2026-08-10 15:35:49,313 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-10 15:35:53,365 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-10 15:35:59,638 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-10 15:36:08,404 [INFO] Stop button press 1 of 3
+2026-08-10 15:36:08,667 [INFO] Stop button press 2 of 3
+2026-08-10 15:36:08,688 [INFO] Stop button press 2 of 3
+2026-08-10 15:36:08,901 [INFO] Stop button press 3 of 3
+2026-08-10 15:36:08,963 [INFO] Recording ended by button 3 (caller).
+2026-08-10 15:36:08,965 [INFO] Captured 9.0s at -6 dBFS
+2026-08-10 15:36:08,968 [INFO] Saved /mnt/aet_usb/recordings/voice_20260810_153608.wav (9.0s)
+2026-08-10 15:36:08,971 [INFO] Level -6 dBFS -> -6 dBFS after gain
+2026-08-10 15:36:11,731 [INFO] Vosk transcribed: 'oh to talk about system'
+2026-08-10 15:36:11,746 [INFO] Final transcription: 'oh to talk about system'
+2026-08-10 15:36:11,747 [INFO] Voice: oh to talk about system
+2026-08-10 15:36:11,748 [INFO] Speaking: "You asked: oh to talk about system"
+2026-08-12 22:18:42,670 [INFO] pygame.mixer initialised on default device.
+2026-08-12 22:18:42,683 [INFO] Module loaded: tts
+2026-08-12 22:18:43,021 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-12 22:18:43,023 [INFO] STT engines active: vosk -> google
+2026-08-12 22:18:43,024 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-12 22:18:43,039 [INFO] Module loaded: voice
+2026-08-12 22:18:43,049 [INFO] Module loaded: ai_query
+2026-08-12 22:18:43,052 [INFO] Morse decoder started with auto-timing.
+2026-08-12 22:18:43,053 [INFO] Module loaded: morse
+2026-08-12 22:18:44,062 [INFO] Module loaded: ocr
+2026-08-12 22:18:44,063 [INFO] Module loaded: translator
+2026-08-12 22:18:45,436 [INFO] Module loaded: gesture_control
+2026-08-12 22:18:45,438 [INFO] Module loaded: emotion_engine
+2026-08-12 22:18:45,440 [INFO] Module loaded: gps_navigator
+2026-08-12 22:18:45,444 [INFO] Module loaded: confidential_mode
+2026-08-12 22:18:45,489 [INFO] Module loaded: object_detection
+2026-08-12 22:18:45,491 [INFO] Pico W Morse buttons connected.
+2026-08-12 22:18:45,492 [INFO] Using the caller's Morse serial connection.
+2026-08-12 22:18:45,493 [INFO] ==================================================
+2026-08-12 22:18:45,494 [INFO] BlindAssist Starting...
+2026-08-12 22:18:45,494 [INFO] ==================================================
+2026-08-12 22:18:45,503 [INFO] TTS Manager ready.
+2026-08-12 22:18:45,504 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-12 22:18:51,697 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:19:12,812 [INFO] Mode 3: Voice Ask
+2026-08-12 22:19:12,814 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-12 22:19:16,662 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-12 22:19:22,935 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:19:22,937 [INFO] Recording ended by ENTER.
+2026-08-12 22:19:22,938 [ERROR] arecord failed on plughw:2,0: no audio captured
+2026-08-12 22:19:22,939 [INFO] Speaking: "I could not use the microphone. Please check that it is plug"
+2026-08-12 22:19:28,356 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:19:55,937 [INFO] Mode 3: Voice Ask
+2026-08-12 22:19:55,939 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-12 22:19:59,672 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-12 22:20:05,944 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:20:10,613 [INFO] Stop button press 1 of 3
+2026-08-12 22:20:11,000 [INFO] Stop button press 2 of 3
+2026-08-12 22:20:11,022 [INFO] Stop button press 2 of 3
+2026-08-12 22:20:11,385 [INFO] Stop button press 3 of 3
+2026-08-12 22:20:11,516 [INFO] Recording ended by button 3 (caller).
+2026-08-12 22:20:11,518 [INFO] Captured 5.2s at -15 dBFS
+2026-08-12 22:20:11,521 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_222011.wav (5.2s)
+2026-08-12 22:20:11,523 [INFO] Level -15 dBFS -> -15 dBFS after gain
+2026-08-12 22:20:13,238 [INFO] Vosk transcribed: 'what is photosynthesis'
+2026-08-12 22:20:13,248 [INFO] Final transcription: 'what is photosynthesis'
+2026-08-12 22:20:13,249 [INFO] Voice: what is photosynthesis
+2026-08-12 22:20:13,249 [INFO] Speaking: "You asked: what is photosynthesis"
+2026-08-12 22:25:26,244 [INFO] pygame.mixer initialised on default device.
+2026-08-12 22:25:26,246 [INFO] Module loaded: tts
+2026-08-12 22:25:26,602 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-12 22:25:26,603 [INFO] STT engines active: vosk -> google
+2026-08-12 22:25:26,605 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-12 22:25:26,620 [INFO] Module loaded: voice
+2026-08-12 22:25:26,625 [INFO] Module loaded: ai_query
+2026-08-12 22:25:26,627 [INFO] Morse decoder started with auto-timing.
+2026-08-12 22:25:26,628 [INFO] Module loaded: morse
+2026-08-12 22:25:26,683 [INFO] Module loaded: ocr
+2026-08-12 22:25:26,684 [INFO] Module loaded: translator
+2026-08-12 22:25:27,285 [INFO] Module loaded: gesture_control
+2026-08-12 22:25:27,286 [INFO] Module loaded: emotion_engine
+2026-08-12 22:25:27,287 [INFO] Module loaded: gps_navigator
+2026-08-12 22:25:27,291 [INFO] Module loaded: confidential_mode
+2026-08-12 22:25:27,292 [INFO] Module loaded: object_detection
+2026-08-12 22:25:27,294 [INFO] Pico W Morse buttons connected.
+2026-08-12 22:25:27,295 [INFO] Using the caller's Morse serial connection.
+2026-08-12 22:25:27,295 [INFO] ==================================================
+2026-08-12 22:25:27,296 [INFO] BlindAssist Starting...
+2026-08-12 22:25:27,296 [INFO] ==================================================
+2026-08-12 22:25:27,301 [INFO] TTS Manager ready.
+2026-08-12 22:25:27,302 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-12 22:25:33,495 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:26:17,941 [INFO] Mode 3: Voice Ask
+2026-08-12 22:26:17,942 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-08-12 22:26:21,673 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-08-12 22:26:28,413 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:26:32,676 [INFO] Stop button press 1 of 3
+2026-08-12 22:26:32,954 [INFO] Stop button press 2 of 3
+2026-08-12 22:26:32,975 [INFO] Stop button press 2 of 3
+2026-08-12 22:26:33,262 [INFO] Stop button press 3 of 3
+2026-08-12 22:26:33,383 [INFO] Recording ended by button 3 (caller).
+2026-08-12 22:26:33,385 [INFO] Captured 4.6s at -18 dBFS
+2026-08-12 22:26:33,388 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_222633.wav (4.6s)
+2026-08-12 22:26:33,390 [INFO] Level -18 dBFS -> -18 dBFS after gain
+2026-08-12 22:26:35,220 [INFO] Vosk transcribed: 'what if photosynthesis'
+2026-08-12 22:26:35,232 [INFO] Final transcription: 'what if photosynthesis'
+2026-08-12 22:26:35,233 [INFO] Voice: what if photosynthesis
+2026-08-12 22:26:35,233 [INFO] Speaking: "You asked: what if photosynthesis"
+2026-08-12 22:31:55,437 [INFO] pygame.mixer initialised on default device.
+2026-08-12 22:31:55,440 [INFO] Module loaded: tts
+2026-08-12 22:31:55,776 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-12 22:31:55,777 [INFO] STT engines active: vosk -> google
+2026-08-12 22:31:55,779 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-12 22:31:55,794 [INFO] Module loaded: voice
+2026-08-12 22:31:55,799 [INFO] Module loaded: ai_query
+2026-08-12 22:31:55,801 [INFO] Morse decoder started with auto-timing.
+2026-08-12 22:31:55,802 [INFO] Module loaded: morse
+2026-08-12 22:31:55,858 [INFO] Module loaded: ocr
+2026-08-12 22:31:55,859 [INFO] Module loaded: translator
+2026-08-12 22:31:56,463 [INFO] Module loaded: gesture_control
+2026-08-12 22:31:56,464 [INFO] Module loaded: emotion_engine
+2026-08-12 22:31:56,465 [INFO] Module loaded: gps_navigator
+2026-08-12 22:31:56,470 [INFO] Module loaded: confidential_mode
+2026-08-12 22:31:56,471 [INFO] Module loaded: object_detection
+2026-08-12 22:31:56,473 [INFO] Pico W Morse buttons connected.
+2026-08-12 22:31:56,474 [INFO] Using the caller's Morse serial connection.
+2026-08-12 22:31:56,474 [INFO] ==================================================
+2026-08-12 22:31:56,475 [INFO] BlindAssist Starting...
+2026-08-12 22:31:56,475 [INFO] ==================================================
+2026-08-12 22:31:56,480 [INFO] TTS Manager ready.
+2026-08-12 22:31:56,481 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-12 22:32:02,747 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:32:11,668 [INFO] Mode 4: Translate
+2026-08-12 22:32:11,669 [INFO] Speaking: "Translation mode. Press 1 or say 'one' to type your text. Pr"
+2026-08-12 22:32:28,747 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:32:30,665 [INFO] Stop button press 1 of 3
+2026-08-12 22:32:42,752 [INFO] Stop button press 1 of 3
+2026-08-12 22:32:43,754 [INFO] Stop button press 2 of 3
+2026-08-12 22:32:44,145 [INFO] Stop button press 3 of 3
+2026-08-12 22:32:44,227 [INFO] Recording ended by button 3.
+2026-08-12 22:32:44,230 [INFO] Captured 15.1s at -13 dBFS
+2026-08-12 22:32:44,233 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_223244.wav (15.1s)
+2026-08-12 22:32:44,238 [INFO] Level -13 dBFS -> -13 dBFS after gain
+2026-08-12 22:32:46,302 [INFO] Vosk transcribed: 'i am that's'
+2026-08-12 22:32:46,309 [INFO] Final transcription: 'i am that's'
+2026-08-12 22:33:06,247 [INFO] Speaking: "Type your text and press Enter."
+2026-08-12 22:34:03,203 [INFO] Speaking: "Which translation do you want? Press 1 or say 'hindi'    for"
+2026-08-12 22:34:26,389 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:34:33,140 [INFO] Stop button press 1 of 3
+2026-08-12 22:34:33,432 [INFO] Stop button press 2 of 3
+2026-08-12 22:34:33,453 [INFO] Stop button press 2 of 3
+2026-08-12 22:34:33,749 [INFO] Stop button press 3 of 3
+2026-08-12 22:34:33,760 [INFO] Recording ended by button 3.
+2026-08-12 22:34:33,761 [INFO] Captured 7.0s at -9 dBFS
+2026-08-12 22:34:33,764 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_223433.wav (7.0s)
+2026-08-12 22:34:33,767 [INFO] Level -9 dBFS -> -9 dBFS after gain
+2026-08-12 22:34:35,274 [INFO] Vosk transcribed: 'the think those english'
+2026-08-12 22:34:35,288 [INFO] Final transcription: 'the think those english'
+2026-08-12 22:34:35,289 [INFO] Translating from Hindi to English: "I am Dax Patel , i am studying at Pandit Deendayal Energy University..."
+2026-08-12 22:34:35,289 [INFO] Speaking: "Translating. Hindi to English."
+2026-08-12 22:34:35,971 [INFO] Translation result: "I am Dax Patel, i am studying at Pandit Deendayal Energy University..."
+2026-08-12 22:34:35,972 [INFO] Translated [hi→en]: I am Dax Patel , i am studying at Pandit Deendayal Energy University → I am Dax Patel, i am studying at Pandit Deendayal Energy University
+2026-08-12 22:34:39,004 [INFO] Speaking: "Translation: I am Dax Patel, i am studying at Pandit Deenday"
+2026-08-12 22:34:47,111 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:34:56,597 [INFO] Mode 4: Translate
+2026-08-12 22:34:56,598 [INFO] Speaking: "Translation mode. Press 1 or say 'one' to type your text. Pr"
+2026-08-12 22:35:13,926 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:35:15,736 [INFO] Recording ended by ENTER.
+2026-08-12 22:35:15,741 [INFO] Captured 1.5s at -19 dBFS
+2026-08-12 22:35:15,743 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_223515.wav (1.5s)
+2026-08-12 22:35:15,744 [INFO] Level -19 dBFS -> -19 dBFS after gain
+2026-08-12 22:35:16,783 [INFO] Google could not understand the audio.
+2026-08-12 22:35:17,832 [INFO] Google could not understand the audio.
+2026-08-12 22:35:20,567 [INFO] Speaking: "Type your text and press Enter."
+2026-08-12 22:36:00,849 [INFO] Speaking: "Which translation do you want? Press 1 or say 'hindi'    for"
+2026-08-12 22:36:24,035 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:36:24,037 [INFO] Recording ended by ENTER.
+2026-08-12 22:36:24,039 [ERROR] arecord failed on plughw:2,0: no audio captured
+2026-08-12 22:36:26,877 [INFO] Translating from English to Gujarati: "i am dax patel , i am studying at PDEU and student of Rajeev Gupta..."
+2026-08-12 22:36:26,877 [INFO] Speaking: "Translating. English to Gujarati."
+2026-08-12 22:36:27,551 [INFO] Translation result: "હું દક્ષ પટેલ છું, હું PDEU માં અભ્યાસ કરું છું અને રાજીવ ગુપ્તાનો વિદ્યાર્થી છુ..."
+2026-08-12 22:36:27,552 [INFO] Translated [en→gu]: i am dax patel , i am studying at PDEU and student of Rajeev Gupta → હું દક્ષ પટેલ છું, હું PDEU માં અભ્યાસ કરું છું અને રાજીવ ગુપ્તાનો વિદ્યાર્થી છુ
+2026-08-12 22:36:30,548 [INFO] Speaking: "Translation: હું દક્ષ પટેલ છું, હું PDEU માં અભ્યાસ કરું છું"
+2026-08-12 22:36:40,355 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:36:43,017 [INFO] Shutting down...
+2026-08-12 22:36:44,960 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-12 22:37:35,915 [INFO] pygame.mixer initialised on default device.
+2026-08-12 22:37:35,918 [INFO] Module loaded: tts
+2026-08-12 22:37:36,260 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-12 22:37:36,262 [INFO] STT engines active: vosk -> google
+2026-08-12 22:37:36,263 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-12 22:37:36,278 [INFO] Module loaded: voice
+2026-08-12 22:37:36,283 [INFO] Module loaded: ai_query
+2026-08-12 22:37:36,285 [INFO] Morse decoder started with auto-timing.
+2026-08-12 22:37:36,286 [INFO] Module loaded: morse
+2026-08-12 22:37:36,341 [INFO] Module loaded: ocr
+2026-08-12 22:37:36,343 [INFO] Module loaded: translator
+2026-08-12 22:37:36,936 [INFO] Module loaded: gesture_control
+2026-08-12 22:37:36,937 [INFO] Module loaded: emotion_engine
+2026-08-12 22:37:36,939 [INFO] Module loaded: gps_navigator
+2026-08-12 22:37:36,942 [INFO] Module loaded: confidential_mode
+2026-08-12 22:37:36,943 [INFO] Module loaded: object_detection
+2026-08-12 22:37:36,945 [INFO] Pico W Morse buttons connected.
+2026-08-12 22:37:36,946 [INFO] Using the caller's Morse serial connection.
+2026-08-12 22:37:36,947 [INFO] ==================================================
+2026-08-12 22:37:36,947 [INFO] BlindAssist Starting...
+2026-08-12 22:37:36,948 [INFO] ==================================================
+2026-08-12 22:37:36,953 [INFO] TTS Manager ready.
+2026-08-12 22:37:36,954 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-12 22:37:42,876 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:37:46,165 [INFO] Mode 4: Translate
+2026-08-12 22:37:48,895 [INFO] Speaking: "Translation mode. Press 1 or say 'one' to type your text. Pr"
+2026-08-12 22:38:05,797 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:38:05,799 [INFO] Recording ended by ENTER.
+2026-08-12 22:38:05,800 [ERROR] arecord failed on plughw:2,0: no audio captured
+2026-08-12 22:38:07,889 [INFO] Speaking: "Type your text and press Enter."
+2026-08-12 22:38:21,906 [INFO] Speaking: "Which translation do you want? Press 1 or say 'hindi'    for"
+2026-08-12 22:38:45,093 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:38:45,095 [INFO] Recording ended by ENTER.
+2026-08-12 22:38:45,096 [ERROR] arecord failed on plughw:2,0: no audio captured
+2026-08-12 22:38:48,242 [INFO] Translating from English to Gujarati: "i am dax patel , i am studying at PDEU and student of Rajeev Gupta..."
+2026-08-12 22:38:48,242 [INFO] Speaking: "Translating. English to Gujarati."
+2026-08-12 22:38:48,571 [INFO] Translation result: "હું દક્ષ પટેલ છું, હું PDEU માં અભ્યાસ કરું છું અને રાજીવ ગુપ્તાનો વિદ્યાર્થી છુ..."
+2026-08-12 22:38:48,572 [INFO] Translated [en→gu]: i am dax patel , i am studying at PDEU and student of Rajeev Gupta → હું દક્ષ પટેલ છું, હું PDEU માં અભ્યાસ કરું છું અને રાજીવ ગુપ્તાનો વિદ્યાર્થી છુ
+2026-08-12 22:38:52,126 [INFO] Speaking: "Translation: હું દક્ષ પટેલ છું, હું PDEU માં અભ્યાસ કરું છું"
+2026-08-12 22:39:01,470 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:39:34,051 [INFO] Mode 4: Translate
+2026-08-12 22:39:34,052 [INFO] Speaking: "Translation mode. Press 1 or say 'one' to type your text. Pr"
+2026-08-12 22:39:51,680 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:39:53,788 [INFO] Recording ended by ENTER.
+2026-08-12 22:39:53,790 [INFO] Captured 1.8s at -20 dBFS
+2026-08-12 22:39:53,792 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_223953.wav (1.8s)
+2026-08-12 22:39:53,794 [INFO] Level -20 dBFS -> -20 dBFS after gain
+2026-08-12 22:39:55,786 [INFO] Google could not understand the audio.
+2026-08-12 22:39:56,847 [INFO] Google could not understand the audio.
+2026-08-12 22:39:57,921 [INFO] Speaking: "Type your text and press Enter."
+2026-08-12 22:40:29,790 [INFO] Speaking: "Which translation do you want? Press 1 or say 'hindi'    for"
+2026-08-12 22:40:52,976 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:40:52,978 [INFO] Recording ended by ENTER.
+2026-08-12 22:40:52,979 [ERROR] arecord failed on plughw:2,0: no audio captured
+2026-08-12 22:40:55,795 [INFO] Translating from English to Hindi: "i am dax patel , i am studying at PDEU and student of Rajeev Gupta...."
+2026-08-12 22:40:55,795 [INFO] Speaking: "Translating. English to Hindi."
+2026-08-12 22:40:56,716 [INFO] Translation result: "मैं डैक्स पटेल हूं, मैं पीडीईयू में पढ़ रहा हूं और राजीव गुप्ता का छात्र हूं।..."
+2026-08-12 22:40:56,717 [INFO] Translated [en→hi]: i am dax patel , i am studying at PDEU and student of Rajeev Gupta. → मैं डैक्स पटेल हूं, मैं पीडीईयू में पढ़ रहा हूं और राजीव गुप्ता का छात्र हूं।
+2026-08-12 22:40:59,539 [INFO] Speaking: "Translation: मैं डैक्स पटेल हूं, मैं पीडीईयू में पढ़ रहा हूं"
+2026-08-12 22:41:08,539 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:41:52,802 [INFO] Mode 4: Translate
+2026-08-12 22:41:52,803 [INFO] Speaking: "Translation mode. Press 1 or say 'one' to type your text. Pr"
+2026-08-12 22:42:10,381 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:42:20,395 [INFO] Recording ended by ENTER.
+2026-08-12 22:42:20,397 [INFO] Captured 9.6s at -21 dBFS
+2026-08-12 22:42:20,400 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_224220.wav (9.6s)
+2026-08-12 22:42:20,403 [INFO] Level -21 dBFS -> -20 dBFS after gain
+2026-08-12 22:42:23,955 [INFO] Google transcribed: '10:40'
+2026-08-12 22:42:23,956 [INFO] Final transcription: '10:40'
+2026-08-12 22:42:26,229 [INFO] Speaking: "Type your text and press Enter."
+2026-08-12 22:42:52,883 [INFO] Speaking: "Which translation do you want? Press 1 or say 'hindi'    for"
+2026-08-12 22:43:16,069 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:43:17,243 [INFO] Recording ended by ENTER.
+2026-08-12 22:43:17,244 [INFO] Captured 0.9s at -19 dBFS
+2026-08-12 22:43:17,246 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_224317.wav (0.9s)
+2026-08-12 22:43:17,248 [INFO] Level -19 dBFS -> -19 dBFS after gain
+2026-08-12 22:43:18,239 [INFO] Google could not understand the audio.
+2026-08-12 22:43:19,199 [INFO] Google could not understand the audio.
+2026-08-12 22:43:21,491 [INFO] Translating from English to Hindi: "holy bitch..."
+2026-08-12 22:43:21,491 [INFO] Speaking: "Translating. English to Hindi."
+2026-08-12 22:43:21,959 [INFO] Translation result: "पवित्र कुतिया..."
+2026-08-12 22:43:21,960 [INFO] Translated [en→hi]: holy bitch → पवित्र कुतिया
+2026-08-12 22:43:25,218 [INFO] Speaking: "Translation: पवित्र कुतिया"
+2026-08-12 22:43:28,623 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:43:48,057 [INFO] Mode 4: Translate
+2026-08-12 22:43:48,058 [INFO] Speaking: "Translation mode. Press 1 or say 'one' to type your text. Pr"
+2026-08-12 22:44:05,439 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:44:05,441 [INFO] Recording ended by ENTER.
+2026-08-12 22:44:05,442 [ERROR] arecord failed on plughw:2,0: no audio captured
+2026-08-12 22:44:09,223 [INFO] Speaking: "Type your text and press Enter."
+2026-08-12 22:44:48,319 [INFO] Speaking: "Which translation do you want? Press 1 or say 'hindi'    for"
+2026-08-12 22:45:11,504 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:45:11,506 [INFO] Recording ended by ENTER.
+2026-08-12 22:45:11,507 [ERROR] arecord failed on plughw:2,0: no audio captured
+2026-08-12 22:45:12,771 [INFO] Translating from English to Hindi: "fuck you bitch you mother fucker , sister fucker bitch..."
+2026-08-12 22:45:13,040 [INFO] Speaking: "Translating. English to Hindi."
+2026-08-12 22:45:13,276 [INFO] Translation result: "चोद साले कुतिया, मादरचोद, बहनचोद कुतिया..."
+2026-08-12 22:45:13,277 [INFO] Translated [en→hi]: fuck you bitch you mother fucker , sister fucker bitch → चोद साले कुतिया, मादरचोद, बहनचोद कुतिया
+2026-08-12 22:45:16,667 [INFO] Speaking: "Translation: चोद साले कुतिया, मादरचोद, बहनचोद कुतिया"
+2026-08-12 22:45:23,154 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:45:53,315 [INFO] Shutting down...
+2026-08-12 22:45:53,317 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-12 22:45:57,367 [INFO] TTS Manager shut down.
+2026-08-12 22:45:57,368 [INFO] Shutdown complete.
+2026-08-12 22:48:19,574 [INFO] pygame.mixer initialised on default device.
+2026-08-12 22:48:19,576 [INFO] Module loaded: tts
+2026-08-12 22:48:19,917 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-12 22:48:19,919 [INFO] STT engines active: vosk -> google
+2026-08-12 22:48:19,920 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-12 22:48:19,935 [INFO] Module loaded: voice
+2026-08-12 22:48:19,941 [INFO] Module loaded: ai_query
+2026-08-12 22:48:19,942 [INFO] Morse decoder started with auto-timing.
+2026-08-12 22:48:19,943 [INFO] Module loaded: morse
+2026-08-12 22:48:20,000 [INFO] Module loaded: ocr
+2026-08-12 22:48:20,002 [INFO] Module loaded: translator
+2026-08-12 22:48:20,626 [INFO] Module loaded: gesture_control
+2026-08-12 22:48:20,628 [INFO] Module loaded: emotion_engine
+2026-08-12 22:48:20,629 [INFO] Module loaded: gps_navigator
+2026-08-12 22:48:20,633 [INFO] Module loaded: confidential_mode
+2026-08-12 22:48:20,634 [INFO] Module loaded: object_detection
+2026-08-12 22:48:20,636 [INFO] Pico W Morse buttons connected.
+2026-08-12 22:48:20,637 [INFO] Using the caller's Morse serial connection.
+2026-08-12 22:48:20,637 [INFO] ==================================================
+2026-08-12 22:48:20,638 [INFO] BlindAssist Starting...
+2026-08-12 22:48:20,638 [INFO] ==================================================
+2026-08-12 22:48:20,643 [INFO] TTS Manager ready.
+2026-08-12 22:48:20,644 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-12 22:48:26,831 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:48:26,999 [INFO] Mode 4: Translate
+2026-08-12 22:48:32,981 [INFO] Speaking: "Translation mode. Press 1 or say 'one' to type your text. Pr"
+2026-08-12 22:48:50,036 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:48:52,306 [INFO] Stop button press 1 of 3
+2026-08-12 22:48:52,593 [INFO] Stop button press 2 of 3
+2026-08-12 22:48:52,613 [INFO] Stop button press 2 of 3
+2026-08-12 22:48:52,876 [INFO] Stop button press 3 of 3
+2026-08-12 22:48:52,908 [INFO] Recording ended by button 3.
+2026-08-12 22:48:52,910 [INFO] Captured 2.5s at -9 dBFS
+2026-08-12 22:48:52,912 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_224852.wav (2.5s)
+2026-08-12 22:48:52,914 [INFO] Level -9 dBFS -> -9 dBFS after gain
+2026-08-12 22:48:55,307 [INFO] Google could not understand the audio.
+2026-08-12 22:48:56,598 [INFO] Google could not understand the audio.
+2026-08-12 22:49:01,438 [INFO] Speaking: "Type your text and press Enter."
+2026-08-12 22:49:14,837 [INFO] Speaking: "Which translation do you want? Press 1 or say 'hindi'    for"
+2026-08-12 22:49:38,022 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-08-12 22:49:40,383 [INFO] Recording ended by ENTER.
+2026-08-12 22:49:40,385 [INFO] Captured 2.0s at -20 dBFS
+2026-08-12 22:49:40,387 [INFO] Saved /mnt/aet_usb/recordings/voice_20260812_224940.wav (2.0s)
+2026-08-12 22:49:40,389 [INFO] Level -20 dBFS -> -20 dBFS after gain
+2026-08-12 22:49:41,563 [INFO] Google could not understand the audio.
+2026-08-12 22:49:42,886 [INFO] Google could not understand the audio.
+2026-08-12 22:49:45,753 [INFO] Translating from English to Gujarati: "તમે હેરાન કર 날 છો કૂતરી, તું માદરફટર, બહેન ફટર કૂતરી..."
+2026-08-12 22:49:45,753 [INFO] Speaking: "Translating. English to Gujarati."
+2026-08-12 22:49:46,654 [INFO] Translation result: "તમે હેરાન કર 날 છો કૂતરી, તુમાદરફટર, નાની ફટર કૂતરી..."
+2026-08-12 22:49:46,656 [INFO] Translated [en→gu]: તમે હેરાન કર 날 છો કૂતરી, તું માદરફટર, બહેન ફટર કૂતરી → તમે હેરાન કર 날 છો કૂતરી, તુમાદરફટર, નાની ફટર કૂતરી
+2026-08-12 22:49:49,827 [INFO] Speaking: "Translation: તમે હેરાન કર 날 છો કૂતરી, તુમાદરફટર, નાની ફટર કૂ"
+2026-08-12 22:49:58,406 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:50:08,698 [INFO] Shutting down...
+2026-08-12 22:50:08,699 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-12 22:50:12,744 [INFO] TTS Manager shut down.
+2026-08-12 22:50:12,746 [INFO] Shutdown complete.
+2026-08-12 22:50:29,788 [INFO] pygame.mixer initialised on default device.
+2026-08-12 22:50:29,790 [INFO] Module loaded: tts
+2026-08-12 22:50:30,137 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-12 22:50:30,138 [INFO] STT engines active: vosk -> google
+2026-08-12 22:50:30,139 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-12 22:50:30,154 [INFO] Module loaded: voice
+2026-08-12 22:50:30,160 [INFO] Module loaded: ai_query
+2026-08-12 22:50:30,161 [INFO] Morse decoder started with auto-timing.
+2026-08-12 22:50:30,162 [INFO] Module loaded: morse
+2026-08-12 22:50:30,218 [INFO] Module loaded: ocr
+2026-08-12 22:50:30,219 [INFO] Module loaded: translator
+2026-08-12 22:50:30,816 [INFO] Module loaded: gesture_control
+2026-08-12 22:50:30,818 [INFO] Module loaded: emotion_engine
+2026-08-12 22:50:30,819 [INFO] Module loaded: gps_navigator
+2026-08-12 22:50:30,823 [INFO] Module loaded: confidential_mode
+2026-08-12 22:50:30,824 [INFO] Module loaded: object_detection
+2026-08-12 22:50:30,826 [INFO] Pico W Morse buttons connected.
+2026-08-12 22:50:30,827 [INFO] Using the caller's Morse serial connection.
+2026-08-12 22:50:30,827 [INFO] ==================================================
+2026-08-12 22:50:30,828 [INFO] BlindAssist Starting...
+2026-08-12 22:50:30,828 [INFO] ==================================================
+2026-08-12 22:50:30,833 [INFO] TTS Manager ready.
+2026-08-12 22:50:30,834 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-12 22:50:37,013 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:51:04,648 [INFO] Mode 6: Object Detection
+2026-08-12 22:51:04,650 [INFO] Speaking: "Starting object detection. Press any button to stop."
+2026-08-12 22:51:04,650 [INFO] Object detection starting.
+2026-08-12 22:51:15,687 [INFO] Loading /home/pi/blindterminal/models/yolov8n.pt...
+2026-08-12 22:51:15,950 [INFO] Model ready.
+2026-08-12 22:51:15,967 [INFO] Streaming detection active (display=False)
+2026-08-12 22:51:17,134 [INFO] Speaking: "Object detection stopped."
+2026-08-12 22:51:19,995 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:51:43,757 [INFO] Mode 9: Math Solver
+2026-08-12 22:51:43,759 [INFO] Speaking: "Math Solver. Press 1 for voice input, or 2 to type the probl"
+2026-08-12 22:52:03,759 [INFO] Speaking: "No valid input method selected."
+2026-08-12 22:52:07,317 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:53:17,525 [INFO] Shutting down...
+2026-08-12 22:53:17,526 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-12 22:53:21,568 [INFO] TTS Manager shut down.
+2026-08-12 22:53:21,569 [INFO] Shutdown complete.
+2026-08-12 22:54:49,921 [INFO] pygame.mixer initialised on default device.
+2026-08-12 22:54:49,924 [INFO] Module loaded: tts
+2026-08-12 22:54:50,263 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-12 22:54:50,265 [INFO] STT engines active: vosk -> google
+2026-08-12 22:54:50,266 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-08-12 22:54:50,281 [INFO] Module loaded: voice
+2026-08-12 22:54:50,286 [INFO] Module loaded: ai_query
+2026-08-12 22:54:50,288 [INFO] Morse decoder started with auto-timing.
+2026-08-12 22:54:50,289 [INFO] Module loaded: morse
+2026-08-12 22:54:50,346 [INFO] Module loaded: ocr
+2026-08-12 22:54:50,348 [INFO] Module loaded: translator
+2026-08-12 22:54:50,968 [INFO] Module loaded: gesture_control
+2026-08-12 22:54:50,969 [INFO] Module loaded: emotion_engine
+2026-08-12 22:54:50,971 [INFO] Module loaded: gps_navigator
+2026-08-12 22:54:50,974 [INFO] Module loaded: confidential_mode
+2026-08-12 22:54:50,976 [INFO] Module loaded: object_detection
+2026-08-12 22:54:50,978 [INFO] Pico W Morse buttons connected.
+2026-08-12 22:54:50,978 [INFO] Using the caller's Morse serial connection.
+2026-08-12 22:54:50,979 [INFO] ==================================================
+2026-08-12 22:54:50,980 [INFO] BlindAssist Starting...
+2026-08-12 22:54:50,980 [INFO] ==================================================
+2026-08-12 22:54:50,986 [INFO] TTS Manager ready.
+2026-08-12 22:54:50,987 [INFO] Speaking: "Welcome to Blind Assist. Tap a digit on the buttons to selec"
+2026-08-12 22:54:56,856 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:55:18,023 [INFO] Mode 6: Object Detection
+2026-08-12 22:55:18,024 [INFO] Speaking: "Starting object detection. Press any button to stop."
+2026-08-12 22:55:18,025 [INFO] Object detection starting.
+2026-08-12 22:55:19,984 [INFO] Loading /home/pi/blindterminal/models/yolov8n.pt...
+2026-08-12 22:55:20,055 [INFO] Model ready.
+2026-08-12 22:55:20,057 [INFO] Streaming detection active (display=False)
+2026-08-12 22:55:23,697 [INFO] Speaking: "Object detection stopped."
+2026-08-12 22:55:26,678 [INFO] Speaking: "Tap a digit 1 through 9 to choose a mode, or 0 to shut down."
+2026-08-12 22:55:35,154 [INFO] Shutting down...
+2026-08-12 22:55:35,156 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-08-12 22:55:39,154 [INFO] TTS Manager shut down.
+2026-08-12 22:55:39,156 [INFO] Shutdown complete.

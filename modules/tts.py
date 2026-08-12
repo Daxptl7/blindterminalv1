@@ -53,8 +53,64 @@ def _load_settings_static() -> dict:
 
 
 _static_settings = _load_settings_static()
-SPEAKER_DEVICE = _static_settings.get("speaker_device", "plughw:3,0")
-BONE_DEVICE = _static_settings.get("bone_device", "hw:3,0")
+
+
+def _alsa_playback_devices() -> list:
+    """ALSA playback devices that actually exist, as plughw:CARD,DEV strings.
+
+    Confidential Mode routes private speech to one sound card and public
+    speech to another. Pointing either at a card that is not present makes the
+    private/public split silently collapse — which for this product means a
+    blind user's private document can be read out of the wrong speaker. The
+    configured names are therefore checked against the hardware at startup.
+    """
+    devices = []
+    if IS_MACOS:
+        return devices
+    try:
+        out = subprocess.run(["aplay", "-l"], capture_output=True, text=True,
+                             timeout=5).stdout
+        for line in out.splitlines():
+            if not line.startswith("card "):
+                continue
+            try:
+                card = line.split("card ")[1].split(":")[0].strip()
+                dev = line.split("device ")[1].split(":")[0].strip()
+                name = f"plughw:{card},{dev}"
+                if name not in devices:
+                    devices.append(name)
+            except (IndexError, ValueError):
+                continue
+    except Exception as e:
+        logger.debug(f"Could not enumerate ALSA playback devices: {e}")
+    return devices
+
+
+_AVAILABLE_OUTPUTS = _alsa_playback_devices()
+
+
+def _validate_device(configured: str, role: str, fallback_index: int) -> str:
+    """Return `configured` if the hardware has it, else the best substitute."""
+    if IS_MACOS or not configured or configured == "default":
+        return configured
+    if not _AVAILABLE_OUTPUTS:
+        return configured                 # cannot verify; trust the config
+    if configured in _AVAILABLE_OUTPUTS:
+        return configured
+
+    substitute = _AVAILABLE_OUTPUTS[min(fallback_index, len(_AVAILABLE_OUTPUTS) - 1)]
+    logger.error(
+        f"{role} device {configured!r} from settings.json does not exist on this "
+        f"machine (available: {', '.join(_AVAILABLE_OUTPUTS)}). Falling back to "
+        f"{substitute!r} — fix {role.lower()}_device in settings.json."
+    )
+    return substitute
+
+
+SPEAKER_DEVICE = _validate_device(
+    _static_settings.get("speaker_device", "plughw:3,0"), "Speaker", 0)
+BONE_DEVICE = _validate_device(
+    _static_settings.get("bone_device", "plughw:2,0"), "Bone", 1)
 
 # ── OPTIONAL BACKENDS ────────────────────────────────────────
 PYGAME_AVAILABLE = False
@@ -75,7 +131,12 @@ except Exception as e:
 
 
 def _find_player(fmt: str):
-    """Return (binary, arg_builder) for the best available CLI audio player."""
+    """Return (binary, arg_builder) for the best available CLI audio player.
+
+    `dev` is honoured only where the player supports it. When routing actually
+    matters, _play_routed() is used instead — it guarantees the requested card
+    is used or reports failure, rather than quietly falling back to default.
+    """
     if IS_MACOS:
         afplay = shutil.which("afplay")
         if afplay:
@@ -83,19 +144,22 @@ def _find_player(fmt: str):
         return None, None
 
     if fmt == "mp3":
-        for name in ("mpg123", "mpg321", "ffplay"):
+        for name in ("mpg123", "mpg321"):
             binary = shutil.which(name)
             if binary:
-                if name == "ffplay":
-                    return binary, lambda path, dev: [binary, "-nodisp", "-autoexit", "-loglevel", "quiet", path]
                 # mpg123/mpg321 accept an ALSA device via -a, enabling the
                 # speaker/earphone routing Confidential Mode depends on.
-                return binary, lambda path, dev: ([binary, "-q", "-a", dev, path] if dev else [binary, "-q", path])
+                return binary, lambda path, dev, b=binary: (
+                    [b, "-q", "-a", dev, path] if dev else [b, "-q", path])
 
     aplay = shutil.which("aplay")
     if aplay and fmt == "wav":
         return aplay, lambda path, dev: ([aplay, "-q", "-D", dev, path] if dev else [aplay, "-q", path])
 
+    # ffplay plays anything but cannot select an ALSA card, so it is only a
+    # non-routed fallback. (ffplay used to be listed in the mp3 loop above,
+    # where its arg-builder closed over the loop's `binary` — a latent
+    # NameError on any other code path through this function.)
     ffplay = shutil.which("ffplay")
     if ffplay:
         return ffplay, lambda path, dev: [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet", path]
@@ -103,40 +167,71 @@ def _find_player(fmt: str):
     return None, None
 
 
+def _decode_mp3_to_wav(data: bytes) -> bytes:
+    """Decode MP3 to 16-bit PCM WAV in memory. Returns b"" if not possible.
+
+    gTTS returns MP3, but `aplay` — the only player on a stock Raspberry Pi OS
+    image that can target a specific ALSA card — speaks WAV only. Without this
+    conversion, Confidential Mode's private/speaker routing was impossible for
+    the default (gTTS) voice unless mpg123 happened to be installed.
+    """
+    try:
+        import io
+
+        import soundfile as sf
+
+        samples, rate = sf.read(io.BytesIO(data), dtype="int16")
+        out = io.BytesIO()
+        sf.write(out, samples, rate, format="WAV", subtype="PCM_16")
+        return out.getvalue()
+    except Exception as e:
+        logger.debug(f"In-memory MP3 decode unavailable: {e}")
+        return b""
+
+
+def _routed_commands(path: str, fmt: str, device: str) -> list:
+    """Playback commands that genuinely honour `device`, best first."""
+    commands = []
+    aplay = shutil.which("aplay")
+    ffmpeg = shutil.which("ffmpeg")
+
+    if fmt == "wav" and aplay:
+        commands.append([aplay, "-q", "-D", device, path])
+    if fmt == "mp3":
+        for name in ("mpg123", "mpg321"):
+            binary = shutil.which(name)
+            if binary:
+                commands.append([binary, "-q", "-a", device, path])
+                break
+        if ffmpeg:
+            # ffmpeg can write straight to an ALSA device as an output sink.
+            commands.append([ffmpeg, "-loglevel", "quiet", "-i", path,
+                             "-f", "alsa", device])
+    return commands
+
+
 def switch_output_device(device_name: str) -> bool:
     """Route audio to a named output device (ALSA name on the Pi).
 
-    Always records the requested device so the CLI-player fallback can honour
-    it too — previously routing only worked through pygame, so Confidential
-    Mode's private/speaker split silently did nothing without pygame.
+    Records the requested device; _play_routed() applies it per-utterance with
+    a player that can actually target an ALSA card.
     """
     global _current_device
     if device_name == _current_device:
         return True
 
-    if not PYGAME_AVAILABLE:
-        _current_device = device_name
-        logger.info(f"Audio device set to {device_name} (used by CLI player fallback).")
-        return True
-
-    try:
-        pygame.mixer.quit()
-        pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=1024,
-                          devicename=device_name)
-        _current_device = device_name
-        logger.info(f"Audio output switched to {device_name}")
-        return True
-    except TypeError:
-        logger.warning("This pygame build does not support devicename= routing.")
-    except Exception as e:
-        logger.error(f"Failed to switch audio device to {device_name}: {e}")
-
-    try:
-        pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=1024)
-    except Exception:
-        pass
-    _current_device = device_name  # remembered for the CLI fallback regardless
-    return False
+    # Selecting the device is just bookkeeping now: _play_routed() applies it
+    # per-utterance with a player that can actually target an ALSA card.
+    #
+    # This used to tear down and re-init pygame's mixer with
+    # devicename=<ALSA name>. That could never work — SDL enumerates outputs by
+    # friendly name ("USB Audio Device Analog Stereo"), not by ALSA name — so
+    # every switch threw, re-inited the default device, and returned False
+    # while still claiming the device had been remembered. The mixer churn also
+    # risked leaving playback broken for unrelated speech.
+    _current_device = device_name
+    logger.info(f"Audio output device set to {device_name}")
+    return True
 
 
 def use_speaker_output() -> bool:
@@ -305,6 +400,66 @@ class TTSManager:
                 except Exception:
                     pass
 
+    def _play_routed(self, data: bytes, fmt: str, device: str) -> bool:
+        """Play `data` on a specific ALSA card, or return False.
+
+        This exists because pygame cannot do it. SDL enumerates outputs by
+        friendly name ("USB Audio Device Analog Stereo"), not by ALSA name, so
+        `pygame.mixer.init(devicename="plughw:2,0")` never matches a device and
+        routing silently fell back to the default output. For Confidential Mode
+        that is a privacy failure, not a cosmetic one: "private" speech went to
+        whichever card ALSA defaulted to. If none of these commands work we
+        return False so the caller can decide, rather than playing the text out
+        of the wrong speaker.
+        """
+        payload, play_fmt = data, fmt
+        if fmt == "mp3" and not shutil.which("mpg123") and not shutil.which("mpg321"):
+            decoded = _decode_mp3_to_wav(data)
+            if decoded:
+                payload, play_fmt = decoded, "wav"
+
+        commands = _routed_commands("<path>", play_fmt, device)
+        if not commands:
+            logger.warning(
+                f"No player can route {play_fmt} to {device}. Install mpg123 "
+                "(`sudo apt install mpg123`) or python soundfile for routed audio.")
+            return False
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=f".{play_fmt}", delete=False) as tmp:
+                tmp.write(payload)
+                tmp_path = tmp.name
+
+            for template in _routed_commands(tmp_path, play_fmt, device):
+                try:
+                    proc = subprocess.Popen(template, stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.DEVNULL)
+                    with self._proc_lock:
+                        self._proc = proc
+                    proc.wait(timeout=120)
+                    if proc.returncode == 0:
+                        return True
+                    logger.debug(f"Routed playback failed: {' '.join(template[:2])}")
+                except subprocess.TimeoutExpired:
+                    logger.error("Routed audio player timed out.")
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    return False
+                except Exception as e:
+                    logger.debug(f"Routed player error: {e}")
+            return False
+        finally:
+            with self._proc_lock:
+                self._proc = None
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
     def _play_pyttsx3_direct(self, text: str) -> bool:
         """Last audible resort: speak straight out of pyttsx3, no file involved."""
         if not self._engine_available:
@@ -326,6 +481,18 @@ class TTSManager:
             data, fmt = self._synthesize(text, lang)
 
             if data and fmt:
+                # When a specific card has been selected (Confidential Mode),
+                # routing is a correctness requirement — try the device-aware
+                # players first and only fall back to the default output if
+                # none of them can drive that card at all.
+                device = None if IS_MACOS else _current_device
+                if device not in (None, "default"):
+                    if self._play_routed(data, fmt, device):
+                        return
+                    logger.error(
+                        f"Could not play audio on {device}; falling back to the "
+                        "default output. Confidential routing is NOT in effect.")
+
                 if self._play_pygame(data, fmt):
                     return
                 if self._play_system(data, fmt):

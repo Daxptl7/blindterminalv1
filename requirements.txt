@@ -15,9 +15,33 @@ pyttsx3>=2.90
 gTTS>=2.5.0
 pygame>=2.6.0
 SpeechRecognition>=3.10.0
-vosk>=0.3.45
-pocketsphinx>=5.0.0
 python-dotenv>=1.0.0
+
+# vosk is the ONLY offline speech-recognition engine that actually works well
+# here, and it needs a model as well as the package. Installing the package
+# alone leaves voice input dependent on the internet, which on this device
+# means Modes 3/4/7/9 stop working whenever the network does. After
+# `pip install vosk`, download a model:
+#
+#   mkdir -p models_local && cd models_local
+#   wget https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip
+#   unzip vosk-model-small-en-in-0.4.zip && mv vosk-model-small-en-in-0.4 vosk
+#
+# (~40MB download, 55MB on disk, Indian English.) It is deliberately placed on
+# the SD card rather than under models/ — that path is a symlink to a
+# removable USB stick, and speech is the device's primary input.
+# Run `python3 selftest.py` afterwards to confirm it was found.
+vosk>=0.3.45
+
+# soundfile decodes gTTS MP3 in-memory so audio can be routed to a specific
+# ALSA card. Without it (and without mpg123), Confidential Mode's
+# private-earphones / public-speaker split cannot be enforced for the default
+# voice — private text would play out of whichever card ALSA defaults to.
+soundfile>=0.12.1
+
+# Optional last-resort offline engine. Lower accuracy (~70-80%) than vosk and
+# not required if vosk is installed.
+pocketsphinx>=5.0.0
 
 # ── Hardware I/O ────────────────────────────────────────────
 # pyserial is imported by morse_serial.py (Pico W buttons), gps_navigator.py

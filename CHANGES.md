@@ -5,6 +5,210 @@ on a fresh Raspberry Pi OS install. Everything below has already been
 fixed and tested for valid Python syntax — see
 `AET_Master_Software_Guide.md` for full step-by-step setup instructions.
 
+---
+
+# Voice: record until you say stop, and record from the right microphone
+
+Two separate problems, fixed together.
+
+## 1. Every recording stopped after 8 seconds
+
+`voice_record_max_seconds` (8 s) capped *every* capture, and 700 ms of silence
+ended the phrase even inside that window — so pausing to think ended the
+question. Anything longer than a short command was truncated and the fragment
+was what got transcribed.
+
+The modes where you compose a sentence — **Mode 3 (Voice Ask)**, **Mode 7
+(Translate → voice input)** and **Mode 9 (Math Solver → voice)** — now record
+open-ended: no time limit, no silence cut-off.
+
+**Press Button 3 three times to stop the recording.** The device says
+"Take as long as you need. Press button 3 three times when you are finished."
+Three presses rather than one so a knock against the button cannot cut a
+question short; they must come within 4 s of each other. On a laptop with no
+Pico W attached, ENTER stops it instead. A 3-minute backstop
+(`voice_manual_max_seconds`) exists only so a stuck button cannot record
+forever.
+
+Short one-word answers ("yes", "hindi", a menu choice) still use the old timed
+capture — waiting for three button presses to answer "yes" would be worse.
+
+New settings, all in `config/settings.json`:
+
+| key | default | meaning |
+|---|---|---|
+| `voice_manual_max_seconds` | 180 | backstop for an open-ended recording |
+| `voice_stop_press_count` | 3 | presses of Button 3 that end it |
+| `voice_stop_press_window_seconds` | 4.0 | max gap between those presses |
+| `voice_open_transient_ms` | 250 | audio discarded when a stream opens |
+
+## 2. It was recording from a card with no microphone on it
+
+This Pi has two identical "USB Audio Device" dongles (cards 2 and 3). Only one
+has a microphone capsule; the other's capture input floats and picks up 50/100
+Hz mains hum at about **-42 dBFS**. That is *louder* than the -60 dBFS silence
+gate the old code used, so the hum was accepted as a valid recording, sent to
+Vosk and Google, and came back as "I didn't catch that" — for every question,
+because ALSA's `default` and PortAudio's default both point at that same card.
+The logs show it exactly: `Captured 8.0s at -42 dBFS`, then two engines failing.
+
+- Hum is now told apart from a live input without needing speech in the clip:
+  it is stationary (loud and quiet 100 ms frames measure the same) and has the
+  crest factor of a sine wave, where even a silent live microphone has noise
+  peaking 12+ dB above its own RMS.
+- A card caught doing that is tried **last** from then on, so the next attempt
+  records from the other dongle. No up-front probing — that would have cost
+  several seconds of silence before every question.
+- The two capture backends (arecord and PyAudio/VAD) used to pick devices
+  independently, so which microphone you got depended on which backend ran.
+  They now share one preference order.
+- webrtcvad was also triggering on the click a USB stream makes when it opens
+  (it armed 90 ms after opening and "ended" the phrase 700 ms later, before
+  anyone had spoken). That opening transient is discarded now.
+
+**Run `python3 mic_check.py` once.** It records from each card while you speak
+and reports which one hears you, then offers to save it as `mic_device` in
+`settings.json` — both backends honour that setting. Until it is set, the
+device figures it out by itself but wastes the first attempt doing so.
+
+---
+
+# Voice overhaul + production audit
+
+Run `python3 selftest.py` after any install or hardware change. It reports,
+in one place, what works right now and what to do about anything that does
+not. `--mic` additionally records for three seconds and reports the captured
+level and transcription.
+
+## ⚠️ Action required: rotate the Groq API key
+
+`config/settings.json` is gitignored *now*, but it was committed earlier
+(commits `7342980` and `04ea3b9`), so the live `gsk_…` Groq key and the Gemini
+key are recoverable from git history by anyone with the repository. Gitignoring
+a file does not remove it from history.
+
+1. Revoke and reissue the key at <https://console.groq.com/keys> (and the
+   Gemini key at <https://aistudio.google.com/apikey>).
+2. Put the new keys only in `config/settings.json` on the device.
+3. `config/settings.example.json` is the tracked template — it has the same
+   keys with empty values. Keep secrets out of it.
+
+Purging history (`git filter-repo`) is worth doing too, but rotating the key
+is the part that actually stops the leak.
+
+## Voice input — why it was not working
+
+Five independent faults, each sufficient on its own to make Modes 3/4/7/9 fail.
+
+1. **`listen()` killed its own recording.** The arecord path started the
+   recorder, ran a wait loop *only* when a TTY was attached, then called
+   `process.terminate()` unconditionally. The production device is headless, so
+   stdin is not a TTY, the loop was skipped and the recorder was terminated
+   milliseconds after starting. Every capture produced an essentially empty WAV
+   and every transcription failed. Recording now always runs its full window; a
+   keypress only shortens it, and `stop()` can abort it from another thread.
+
+2. **The device recorded its own voice.** `tts.speak()` is a non-blocking
+   queue, so "Ask your question now" was still coming out of the speaker when
+   the microphone opened. The VAD triggered on the device's own prompt and the
+   AI was asked to answer the question it had just spoken. `main._listen()` now
+   drains the speech queue before opening the microphone.
+
+3. **There was no offline speech recognition at all.** `vosk` and
+   `pocketsphinx` were listed in `STT_ENGINES` but neither was installed and
+   `models/vosk/` did not exist, so the advertised three-engine chain was
+   really Google-only — dead without internet, and silent about why. vosk plus
+   the Indian-English model are now installed under `models_local/vosk/`
+   (deliberately on the SD card, not the removable USB that `models/` points
+   at, because speech is the device's primary input). Engine availability is
+   probed once at import and logged as one clear line.
+
+4. **One timeout covered two different things.** The 8-second budget bounded
+   "waiting for the user to start speaking" *and* "how long they may speak"
+   together, so a user who paused to think lost most of their speaking window.
+   These are now separate (`voice_start_timeout_seconds` vs
+   `voice_record_max_seconds`), and the phrase clock starts only once speech is
+   actually detected.
+
+5. **No level normalization.** A USB capsule on a Pi captures around −35 dBFS
+   and the 300 Hz high-pass made it quieter still; every engine degrades badly
+   on input that quiet. Audio is now DC-corrected and gain-normalized to
+   −20 dBFS before recognition, with the gain capped so a silent room is not
+   amplified into noise.
+
+Also in `modules/voice.py`:
+
+- `pyaudio.open()` sat outside the try/finally, so a busy or missing microphone
+  raised straight out of the module and took the whole mode down.
+- The capture device is resolved against real hardware (`arecord -l`) instead
+  of trusting `mic_device: "default"`, silent cards are skipped, and the
+  working device is cached and re-probed if it disappears.
+- Short frames from a buffer overrun no longer crash `webrtcvad`.
+- Sample rates are negotiated (16/48/32/8 kHz) and converted, so USB dongles
+  that only offer 44.1/48 kHz work.
+- A cough no longer costs a full recognition round-trip (`voice_min_speech_ms`).
+- The recordings directory falls back to a writable location instead of
+  aborting the capture when the USB stick is not mounted.
+- Failures are distinguishable: `get_last_error()` returns a sentence written
+  to be read aloud, so "the mic is muted", "no internet", "nothing was said"
+  and "I misheard you" no longer all say *"I didn't catch that"*. Hardware
+  faults are reported immediately instead of being retried.
+- A short beep marks the start of recording, so a blind user can tell the
+  listening pause from a crash.
+
+## Audio output — Confidential Mode was not private
+
+`switch_output_device()` called `pygame.mixer.init(devicename="plughw:2,0")`.
+SDL enumerates outputs by friendly name (`USB Audio Device Analog Stereo`), not
+by ALSA name, so that call could never match a device: every switch threw, the
+mixer was re-initialised on the default output, and "private" speech played out
+of whichever card ALSA happened to default to. For this product that is a
+privacy failure, not a cosmetic one.
+
+Routing is now applied per utterance by a player that can actually target an
+ALSA card (`aplay -D`, `mpg123 -a`, or `ffmpeg -f alsa`), with gTTS MP3 decoded
+to WAV in memory via `soundfile` because `aplay` speaks WAV only. If no player
+can drive the requested card, that is logged as an error rather than silently
+played on the wrong one.
+
+`speaker_device` and `bone_device` are also validated against `aplay -l` at
+startup — `bone_device` was set to `plughw:4,0`, and this machine has no card 4.
+
+## Configuration corrected against the actual hardware
+
+| Setting | Was | Now | Why |
+|---|---|---|---|
+| `bone_device` | `plughw:4,0` | `plughw:2,0` | there is no card 4; cards are 2 and 3 |
+| `yolo_model_path` | `/mnt/aet_usb/models/yolov8m.pt` | `models/yolov8n.pt` | that path does not exist, and only `yolov8n/s` are on the stick |
+| `yolo_confidence` | `0.75` | `0.5` | at 0.75 most real objects were never announced |
+| `gemini_model_name` | `gemini-3.5-flash-lite` | `gemini-2.5-flash` | not a real model id, so Gemini always failed |
+
+## Other modules
+
+- **`modules/object_detection.py`** — `_resolve_model_path()` searched only for
+  `yolov8m.pt`, missed, and then returned the bad configured path anyway;
+  ultralytics cannot auto-download to an arbitrary absolute path, so Mode 6
+  failed on first use. It now accepts any available yolov8 weight, preferring
+  nano (the only size with a usable frame rate on a Pi 5 CPU), and tolerates an
+  unmounted `models/` symlink.
+- **`modules/config_loader.py`** — was a bare `open()`/`json.load()`. A missing
+  or malformed `settings.json` made every importer fail, and `main.py` then
+  reported *Confidential Mode* as unavailable rather than the config as broken.
+  It now degrades to `{}` and says which it was.
+- **`modules/tts.py`** — fixed a latent `NameError` in `_find_player()`, where
+  the ffplay branch's arg-builder closed over `binary` from a loop that had not
+  run on that path.
+- **`main.py`** — all voice call sites go through `_listen()`; the GPS mode's
+  input race was extended from 10s to 25s, because it expired while the
+  recogniser was still working and the advertised voice option could never win.
+
+## New files
+
+- `selftest.py` — pre-flight check (exit code 0 = ready, so it can gate a
+  systemd unit).
+- `config/settings.example.json` — tracked, secret-free config template.
+- `models_local/vosk/` — offline speech model (gitignored; 55MB).
+
 ## Setup process (not code) — environment fix
 - The guide's Section 6.1 now sets up the Python environment with
   **Miniforge/conda** (Python 3.11), not a plain `venv`. A plain venv

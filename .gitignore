@@ -1,6 +1,12 @@
 # Environment and config secrets
+# NOTE: settings.json was committed before this rule existed, so the API keys
+# in commits 7342980 / 04ea3b9 are still in git history and must be rotated.
+# Use config/settings.example.json (tracked, no secrets) as the template.
 .env
 config/settings.json
+
+# Offline speech model (~55MB, downloaded by the installer — see requirements.txt)
+models_local/
 
 # Python cache & build artifacts
 __pycache__/

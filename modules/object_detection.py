@@ -42,7 +42,16 @@ DISPLAY_WINDOW = bool(_settings.get("object_detection_display", False))
 
 # ── MODEL PATH RESOLUTION ──────────────────────────────────
 def _resolve_model_path() -> str:
-    """Use yolo_model_path from settings.json if present, else search canonical locations."""
+    """Locate YOLO weights that actually exist on this device.
+
+    The previous version searched only for `yolov8m.pt`. This Pi ships
+    yolov8n.pt and yolov8s.pt, and the configured path pointed at a directory
+    that does not exist, so every candidate missed and the function returned
+    the bad absolute path anyway — ultralytics cannot auto-download to an
+    arbitrary absolute path, so Mode 6 failed on first use. We now accept any
+    yolov8 weight present, preferring the smallest (nano is the only size that
+    runs at a usable frame rate on a Pi 5 CPU).
+    """
     configured = _settings.get("yolo_model_path")
     if configured:
         p = Path(configured)
@@ -50,17 +59,26 @@ def _resolve_model_path() -> str:
             p = BASE_DIR / configured
         if p.exists():
             return str(p)
+        logger.warning(f"yolo_model_path {configured!r} not found; searching for weights.")
 
-    candidates = [
-        BASE_DIR / "models" / "yolov8m.pt",
-        BASE_DIR / "yolov8m.pt",
-        Path(__file__).parent / "yolov8m.pt",
-    ]
-    for p in candidates:
-        if p.exists():
-            return str(p)
-    # Fallback: let YOLO download it
-    return configured or "yolov8m.pt"
+    search_dirs = [BASE_DIR / "models_local", BASE_DIR / "models", BASE_DIR,
+                   Path(__file__).parent]
+    # Nano first: on a Pi 5 CPU, yolov8n runs several times faster than yolov8m
+    # and Mode 6 announces objects continuously, so latency matters more than
+    # a few points of mAP.
+    for name in ("yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt"):
+        for directory in search_dirs:
+            try:
+                candidate = directory / name
+                if candidate.exists():
+                    logger.info(f"Using YOLO weights: {candidate}")
+                    return str(candidate)
+            except OSError:
+                continue          # e.g. models/ symlink to an unmounted USB
+
+    # Nothing on disk: a bare filename lets ultralytics download it on demand.
+    logger.warning("No YOLO weights found locally; ultralytics will try to download yolov8n.pt.")
+    return "yolov8n.pt"
 
 
 MODEL_PATH = _resolve_model_path()
