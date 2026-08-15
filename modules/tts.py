@@ -179,7 +179,17 @@ def _decode_mp3_to_wav(data: bytes) -> bytes:
     image that can target a specific ALSA card — speaks WAV only. Without this
     conversion, Confidential Mode's private/speaker routing was impossible for
     the default (gTTS) voice unless mpg123 happened to be installed.
+
+    Several decoders are tried because the obvious one is not dependable here.
+    `soundfile` is in requirements.txt, but it only gained MP3 support in
+    libsndfile 1.1.0, and on Raspberry Pi OS the wheel links against the
+    *system* libsndfile — 1.0.31 on Bullseye — which rejects MP3 outright. A
+    device that had soundfile installed therefore still could not route the
+    gTTS voice to a chosen card, and the failure surfaced only as silence.
     """
+    errors = []
+
+    # 1. soundfile — works where libsndfile is 1.1.0+ (Bookworm and later).
     try:
         import io
 
@@ -190,8 +200,83 @@ def _decode_mp3_to_wav(data: bytes) -> bytes:
         sf.write(out, samples, rate, format="WAV", subtype="PCM_16")
         return out.getvalue()
     except Exception as e:
-        logger.debug(f"In-memory MP3 decode unavailable: {e}")
+        errors.append(f"soundfile: {e}")
+
+    # 2. Any MP3-capable CLI decoder, writing a temp WAV. mpg123 and ffmpeg are
+    #    checked here as well as in _routed_commands: this path is what lets an
+    #    old-libsndfile device still reach `aplay -D`, which is the only
+    #    card-targeting player guaranteed to exist on Raspberry Pi OS.
+    decoders = []
+    for name in ("mpg123", "mpg321"):
+        binary = shutil.which(name)
+        if binary:
+            decoders.append(lambda src, dst, b=binary: [b, "-q", "-w", dst, src])
+            break
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        decoders.append(lambda src, dst: [ffmpeg, "-loglevel", "quiet", "-y",
+                                          "-i", src, "-f", "wav", dst])
+
+    for build in decoders:
+        src = dst = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp.write(data)
+                src = tmp.name
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                dst = tmp.name
+            subprocess.run(build(src, dst), timeout=60,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.getsize(dst) > 44:
+                with open(dst, "rb") as f:
+                    return f.read()
+        except Exception as e:
+            errors.append(f"cli: {e}")
+        finally:
+            for path in (src, dst):
+                if path:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+
+    logger.debug(f"In-memory MP3 decode unavailable ({'; '.join(errors) or 'no decoder'}).")
+    return b""
+
+
+def _espeak_to_wav(text: str, rate: int) -> bytes:
+    """espeak → WAV bytes, or b"". The floor of the routed-playback chain.
+
+    pyttsx3 can be installed but unconfigured (no driver, no voice), so it is
+    not a dependable last resort on its own. Shelling out to espeak is: it is
+    present on every Pi image this runs on, and it is exactly what used to
+    deliver routed speech here before the natural voice was wired up. This
+    keeps the worst case equal to the old behaviour — an audible answer on the
+    correct card — instead of silence.
+    """
+    espeak = shutil.which("espeak-ng") or shutil.which("espeak")
+    if not espeak:
         return b""
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = tmp.name
+        subprocess.run([espeak, "-s", str(int(rate)), "-a", "175", "-g", "4",
+                        "-w", tmp_path, text], timeout=60,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.path.getsize(tmp_path) > 44:
+            with open(tmp_path, "rb") as f:
+                return f.read()
+    except Exception as e:
+        logger.debug(f"espeak WAV synthesis failed: {e}")
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    return b""
 
 
 # ALSA ring-buffer sizing for the routed players. The defaults are a few tens
@@ -350,9 +435,14 @@ class TTSManager:
                 self._gtts_failed_at = time.time()
                 logger.warning(f"gTTS unavailable ({e}); using offline engine for 30s.")
 
-        # Offline pyttsx3 → WAV on disk.
+        data = self._synthesize_offline_wav(text)
+        return (data, "wav") if data else (b"", None)
+
+    def _synthesize_offline_wav(self, text: str) -> bytes:
+        """pyttsx3 → WAV bytes, or b"". Split out so routed playback can fall
+        back to a format `aplay -D` can definitely handle."""
         if not self._engine_available:
-            return b"", None
+            return b""
 
         tmp_path = None
         try:
@@ -364,10 +454,10 @@ class TTSManager:
                 self._engine.runAndWait()
             with open(tmp_path, "rb") as f:
                 data = f.read()
-            return (data, "wav") if data else (b"", None)
+            return data
         except Exception as e:
             logger.error(f"pyttsx3 synthesis failed: {e}")
-            return b"", None
+            return b""
         finally:
             if tmp_path:
                 try:
@@ -520,6 +610,29 @@ class TTSManager:
                 if device not in (None, "default"):
                     if self._play_routed(data, fmt, device):
                         return
+
+                    # The gTTS voice is MP3, and on a Pi with no mpg123/ffmpeg
+                    # and a pre-1.1 libsndfile there is nothing that can decode
+                    # it — so nothing that can put it on a named card. Rather
+                    # than abandon the card (silence on a headless device whose
+                    # default sink is dead HDMI, and a privacy breach when the
+                    # text was meant for the earphone), re-say it in the
+                    # offline voice, which produces WAV that `aplay -D` always
+                    # handles. Worse voice, right device, still audible.
+                    if fmt == "mp3":
+                        # Lazily: espeak must not run when pyttsx3 already
+                        # produced usable audio — the user is waiting on this.
+                        for synth in (lambda: self._synthesize_offline_wav(text),
+                                      lambda: _espeak_to_wav(text, self._current_rate)):
+                            wav = synth()
+                            if wav and self._play_routed(wav, "wav", device):
+                                logger.warning(
+                                    f"Played {device} in the offline voice: no "
+                                    "MP3 decoder here. `sudo apt install "
+                                    "mpg123` restores the natural gTTS voice "
+                                    "on this card.")
+                                return
+
                     logger.error(
                         f"Could not play audio on {device}; falling back to the "
                         "default output. Confidential routing is NOT in effect.")
