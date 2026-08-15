@@ -121,14 +121,18 @@ try:
     # gTTS returns 24 kHz MP3; matching the mixer rate avoids pitch-shifted
     # ("chipmunk") playback that the old hardcoded 22050 Hz produced.
     #
-    # buffer=4096 (~170 ms at 24 kHz), not 1024 (~42 ms): the Pi runs OCR,
-    # object detection and AI inference alongside playback, and a 42 ms buffer
-    # underruns whenever the CPU is busy — heard as crackling in the middle of
-    # an utterance. Latency of 170 ms is imperceptible for speech.
-    pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=4096)
+    # buffer stays at 1024. Raising it to 4096 to widen the underrun margin
+    # silenced the default output entirely on the Pi — this mixer config is
+    # the one that demonstrably drives the speaker, so it is not tuned
+    # speculatively. Crackle on this path, if it ever appears, is a separate
+    # investigation; the creak that started all this was espeak, not this
+    # buffer. Override it in settings.json rather than editing this line.
+    _buffer = int(_static_settings.get("tts_mixer_buffer", 1024))
+    pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=_buffer)
     PYGAME_AVAILABLE = True
     _current_device = "default"
-    logger.info("pygame.mixer initialised on default device.")
+    logger.info(f"pygame.mixer initialised on default device "
+                f"(buffer={_buffer}, obtained={pygame.mixer.get_init()}).")
 except ImportError:
     logger.info("pygame not installed — falling back to system audio players.")
 except Exception as e:
@@ -637,13 +641,20 @@ class TTSManager:
                         f"Could not play audio on {device}; falling back to the "
                         "default output. Confidential routing is NOT in effect.")
 
+                # Which backend actually produced sound is the single most
+                # useful fact when the device is silent, and it used to be
+                # logged only on failure — so a silent-but-"successful" path
+                # was invisible.
                 if self._play_pygame(data, fmt):
+                    logger.debug(f"Played {fmt} via pygame (default output).")
                     return
                 if self._play_system(data, fmt):
+                    logger.debug(f"Played {fmt} via system player (default output).")
                     return
                 logger.warning("All file-based playback failed; using direct engine.")
 
             if self._play_pyttsx3_direct(text):
+                logger.debug("Played via pyttsx3 direct.")
                 return
 
             # Nothing could speak. Make the failure loud rather than silent —
