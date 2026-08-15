@@ -313,14 +313,31 @@ def _tts():
     return None
 
 
+def _routed_device(attr: str) -> Optional[str]:
+    """Resolve a playback card, preferring the copy tts.py has validated.
+
+    tts.py checks its device names against `aplay -l` at import and substitutes
+    a real card when settings.json names one that does not exist. voice.py
+    holds the same two names but never validates them, so reading them from
+    there is what sent the answer to `plughw:4,0` — a card this machine does
+    not have — and lost the audio. Same settings, but only one of the two
+    copies has been checked against the hardware.
+    """
+    for module in (_tts(), _voice()):
+        if module is None:
+            continue
+        device = getattr(module, attr, None)
+        if device:
+            return device
+    return None
+
+
 def _speaker_device() -> Optional[str]:
-    v = _voice()
-    return getattr(v, "SPEAKER_DEVICE", None) if v else None
+    return _routed_device("SPEAKER_DEVICE")
 
 
 def _earphone_device() -> Optional[str]:
-    v = _voice()
-    return getattr(v, "EARPHONE_DEVICE", None) if v else None
+    return _routed_device("EARPHONE_DEVICE")
 
 
 def _say_on_device(text: str, device: Optional[str],

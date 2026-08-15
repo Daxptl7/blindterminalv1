@@ -90,7 +90,9 @@ def check_audio_output(settings):
           "check `aplay -l`; is the USB sound card plugged in?")
 
     for role, configured in (("speaker_device", settings.get("speaker_device")),
-                             ("bone_device", settings.get("bone_device"))):
+                             ("earphone_device",
+                              settings.get("earphone_device")
+                              or settings.get("bone_device"))):
         if not configured:
             continue
         ok = (not available) or configured in available

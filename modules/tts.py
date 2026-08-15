@@ -16,7 +16,7 @@ Public API (unchanged, plus shutdown/flush):
     speak(text, lang='eng', block=False)
     set_rate(rate) / get_rate()
     is_speaking() / stop() / flush() / shutdown()
-    use_speaker_output() / use_bone_conduction_output() / switch_output_device(name)
+    use_speaker_output() / use_earphone_output() / switch_output_device(name)
 """
 
 import json
@@ -89,8 +89,16 @@ def _alsa_playback_devices() -> list:
 _AVAILABLE_OUTPUTS = _alsa_playback_devices()
 
 
-def _validate_device(configured: str, role: str, fallback_index: int) -> str:
-    """Return `configured` if the hardware has it, else the best substitute."""
+def _validate_device(configured: str, role: str, fallback_index: int,
+                     avoid: str = None) -> str:
+    """Return `configured` if the hardware has it, else the best substitute.
+
+    `avoid` names a card the substitute must not land on. It exists for the
+    earphone: with cards 2 and 3 present and the speaker on 3, a positional
+    fallback picks index 1 — the speaker — so a mistyped earphone_device made
+    private speech come out of the loudspeaker while still reporting success.
+    Preferring any other real output keeps the private/public split intact.
+    """
     if IS_MACOS or not configured or configured == "default":
         return configured
     if not _AVAILABLE_OUTPUTS:
@@ -98,19 +106,40 @@ def _validate_device(configured: str, role: str, fallback_index: int) -> str:
     if configured in _AVAILABLE_OUTPUTS:
         return configured
 
-    substitute = _AVAILABLE_OUTPUTS[min(fallback_index, len(_AVAILABLE_OUTPUTS) - 1)]
+    candidates = [d for d in _AVAILABLE_OUTPUTS if d != avoid] or _AVAILABLE_OUTPUTS
+    substitute = candidates[min(fallback_index, len(candidates) - 1)]
     logger.error(
         f"{role} device {configured!r} from settings.json does not exist on this "
         f"machine (available: {', '.join(_AVAILABLE_OUTPUTS)}). Falling back to "
         f"{substitute!r} — fix {role.lower()}_device in settings.json."
     )
+    if avoid and substitute == avoid:
+        logger.error(
+            "The earphone and the speaker are now the same card: private "
+            "speech WILL be audible on the speaker. Set earphone_device in "
+            "settings.json to a second output card.")
     return substitute
 
 
 SPEAKER_DEVICE = _validate_device(
     _static_settings.get("speaker_device", "plughw:3,0"), "Speaker", 0)
-BONE_DEVICE = _validate_device(
-    _static_settings.get("bone_device", "plughw:2,0"), "Bone", 1)
+
+# The private output is a wired earphone. `bone_device` is the old name for
+# this setting, from when the hardware was going to be a bone-conduction pad;
+# there is no such unit on this device. It is still read so an existing
+# settings.json keeps working, but earphone_device is the name to use.
+_configured_earphone = (_static_settings.get("earphone_device")
+                        or _static_settings.get("bone_device")
+                        or "plughw:2,0")
+if not _static_settings.get("earphone_device") and _static_settings.get("bone_device"):
+    logger.info("settings.json uses the old key 'bone_device'; rename it to "
+                "'earphone_device'. Reading it as the earphone for now.")
+
+EARPHONE_DEVICE = _validate_device(_configured_earphone, "Earphone", 0,
+                                   avoid=SPEAKER_DEVICE)
+
+# Kept so any caller still using the old name gets the same card.
+BONE_DEVICE = EARPHONE_DEVICE
 
 # ── OPTIONAL BACKENDS ────────────────────────────────────────
 PYGAME_AVAILABLE = False
@@ -353,8 +382,13 @@ def use_speaker_output() -> bool:
     return switch_output_device(SPEAKER_DEVICE)
 
 
+def use_earphone_output() -> bool:
+    return switch_output_device(EARPHONE_DEVICE)
+
+
 def use_bone_conduction_output() -> bool:
-    return switch_output_device(BONE_DEVICE)
+    """Deprecated name for use_earphone_output(); the hardware is an earphone."""
+    return use_earphone_output()
 
 
 class _Utterance:

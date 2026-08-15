@@ -145,6 +145,9 @@ MIC_DEVICE = _settings.get("mic_device") or "plughw:4,0"
 # Two outputs, deliberately distinct. The prompt is always asked on the
 # speaker; only the answer decides where the recording is played back.
 SPEAKER_DEVICE = _settings.get("speaker_device") or "plughw:3,0"
+# `bone_device` is the old name for earphone_device — there is no bone
+# conduction unit on this device — and is still read so an existing
+# settings.json keeps working.
 EARPHONE_DEVICE = (_settings.get("earphone_device")
                    or _settings.get("bone_device")
                    or "plughw:2,0")

@@ -51,10 +51,14 @@ settings = load_settings()
 PROMPT_TIMEOUT = settings.get("privacy", {}).get("confidential_prompt_timeout_seconds", 8)
 
 
-def enable_bone_conduction():
+def enable_earphone():
     """Routes audio strictly to the wired earphones (Private)."""
-    tts.use_bone_conduction_output()
+    tts.use_earphone_output()
     print(" 🔒 [PRIVATE MODE] Audio routed to wired earphones.")
+
+
+# The old name, from when this hardware was going to be a bone-conduction pad.
+enable_bone_conduction = enable_earphone
 
 
 def enable_speaker():
@@ -74,7 +78,7 @@ class PrivateAudio:
     on the way out — even if an exception happens inside the block."""
 
     def __enter__(self):
-        enable_bone_conduction()
+        enable_earphone()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):

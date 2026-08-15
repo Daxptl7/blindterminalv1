@@ -373,7 +373,7 @@ def mode_ocr_scan():
         # broken "explain this?" response listener.
         #
         # speak_with_privacy_check() does three things atomically:
-        #   1. Asks "confidential or normal?" through bone conduction only
+        #   1. Asks "confidential or normal?" through the earphone only
         #   2. Waits for Button 1 (private) or Button 2 (speaker) — with an
         #      8-second microphone fallback that accepts "yes"/"no"
         #   3. Routes the spoken text to ONLY the correct audio path
@@ -1160,7 +1160,7 @@ def mode_confidential_demo():
     _speak("This is a demonstration of confidential mode.")
     result = _modules["privacy"].ask_privacy()
     if result == "PRIVATE":
-        _speak("This message is being spoken privately, through bone conduction only.")
+        _speak("This message is being spoken privately, through the earphone only.")
     else:
         _speak("This message is being spoken normally, through the speaker.")
     _modules["privacy"].reset_to_normal()

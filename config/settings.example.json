@@ -19,7 +19,7 @@
   "embedding_provider": "gemini",
   "vector_store_type": "faiss",
   "use_cohere_rerank": false,
-  "bone_device": "plughw:2,0",
+  "earphone_device": "plughw:2,0",
   "speaker_device": "plughw:3,0",
   "yolo_confidence": 0.5,
   "yolo_model_path": "models/yolov8n.pt",
