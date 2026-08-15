@@ -53,7 +53,7 @@ import time
 import cv2
 import numpy as np
 import platform
-from collections import deque
+from collections import Counter, deque
 
 from pathlib import Path
 from typing import Optional, Callable
@@ -527,7 +527,8 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
                    camera_index: Optional[int] = None,
                    display: Optional[bool] = None,
                    stop_event=None,
-                   max_frames: Optional[int] = None):
+                   max_frames: Optional[int] = None,
+                   capture_check: Optional[Callable] = None):
     """
     High-performance gesture detection using VIDEO mode.
     Processes at 30 FPS on Raspberry Pi 5.
@@ -610,6 +611,47 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
     DEBOUNCE_MS    = int(_settings.get("gesture_debounce_ms", 600))
     COOLDOWN_MS    = int(_settings.get("gesture_cooldown_ms", 1500))
 
+    # ── Shutter mode ──────────────────────────────────────────────────────
+    # When capture_check is supplied nothing is ever emitted on its own: the
+    # loop watches, and reports only when the caller asks. Recognising a hand
+    # shape reliably enough to act on it unprompted turned out to be the weak
+    # link — a button press is not ambiguous, so the user holds the pose and
+    # presses, and the pose under the shutter is the one that counts.
+    #
+    # The reading is a majority vote over the last CAPTURE_WINDOW_MS rather
+    # than the single frame the press landed on. Classification flickers
+    # frame to frame, and pressing a button nudges the hand slightly, so the
+    # one frame at the instant of the press is the least trustworthy sample
+    # available.
+    shutter_mode   = capture_check is not None
+    CAPTURE_WINDOW_MS = int(_settings.get("gesture_capture_window_ms", 1000))
+    recent_gestures = deque(maxlen=90)          # (timestamp_ms, gesture|None)
+
+    CAPTURE_FRESH_MS = int(_settings.get("gesture_capture_fresh_ms", 300))
+
+    def _vote(now_ms):
+        window = [(ts, g) for ts, g in recent_gestures
+                  if now_ms - ts <= CAPTURE_WINDOW_MS]
+        seen = [g for _, g in window if g]
+        if not seen:
+            return None
+
+        winner, count = Counter(seen).most_common(1)[0]
+
+        # The pose has to still be in front of the camera. Counting only the
+        # frames that saw a hand means a hand already lowered still wins its
+        # own vote, so pressing the shutter after dropping your arm would fire
+        # whatever was last held.
+        if not any(g == winner and now_ms - ts <= CAPTURE_FRESH_MS
+                   for ts, g in window):
+            return None
+
+        # And it has to dominate rather than merely appear, so a shape passed
+        # through on the way to another one is not what gets taken.
+        if count * 2 < len(seen):
+            return None
+        return winner
+
     # ── Swipe detector state ───────────────────────────────────────────────
     swipe_state = _make_swipe_state()
 
@@ -672,6 +714,41 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
             # Swipe overrides classify_gesture if one was detected this frame
             if swipe is not None:
                 current = swipe
+
+            # ── Shutter mode: report only when the caller asks ─────────────
+            if shutter_mode:
+                recent_gestures.append((now_ms, current))
+                request = None
+                try:
+                    request = capture_check()
+                except Exception as e:
+                    logger.debug(f"capture_check raised: {e}")
+
+                if request == "preview":
+                    if not _callback_allows_continue(
+                            callback_fn, f"PREVIEW:{_vote(now_ms) or 'NONE'}"):
+                        break
+                elif request == "capture":
+                    captured = _vote(now_ms)
+                    logger.info(f"Shutter pressed — captured gesture: {captured}")
+                    if not _callback_allows_continue(
+                            callback_fn, captured or "NO_GESTURE"):
+                        break
+                    recent_gestures.clear()   # do not reuse a spent pose
+
+                if display:
+                    label = current or "None"
+                    cv2.putText(frame, label, (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    cv2.imshow("Gesture", frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+
+                frame_times.append(time.time() - loop_start)
+                frame_count += 1
+                if max_frames is not None and frame_count >= max_frames:
+                    break
+                continue
 
             # ── Debounce / cooldown logic (unchanged from original) ────────
             if current != stable_gesture:
