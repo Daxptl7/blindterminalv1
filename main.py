@@ -593,72 +593,117 @@ def _decode_morse_input(morse_text: str) -> str:
     return ''.join(decoded).strip()
 
 
-def _get_button_or_voice_choice(options_map: dict, timeout: float = 8.0) -> str | None:
+# ── BUTTON-ONLY MENU SELECTION ──────────────────────────────
+# Mode 4 answers its menus with the three physical buttons and nothing else.
+# It used to try the buttons, then open the microphone and transcribe a spoken
+# answer, then read the keyboard. On the real device that meant every menu sat
+# through a recording and a speech-to-text round trip — the lag the buttons
+# were there to avoid.
+#
+# Timing note: the Pico flushes its Morse buffer into a LETTER message
+# LETTER_GAP_MS (1500 ms) after the last symbol, so a button pressed to answer
+# a menu ALSO arrives a moment later as a stray letter. Menus therefore drop
+# whatever is already queued before they read, and Morse typing waits for that
+# gap to pass so a word never starts with a phantom letter.
+_BUTTON_CHOICE_TIMEOUT_S = float(_settings.get("button_choice_timeout_seconds", 15.0))
+_BUTTON_DOUBLE_WINDOW_S = float(_settings.get("button_double_press_seconds", 2.0))
+_BUTTON_LETTER_SETTLE_S = 1.8          # must exceed the Pico's LETTER_GAP_MS
+
+
+def _drain_button_messages():
+    """Drop button traffic that arrived before this menu started listening.
+
+    Without this, the press that entered a mode is still sitting in the queue
+    and instantly answers the next question — the same failure the stdin drain
+    fixes for the keyboard.
     """
-    Universal choice getter used by mode_translate and any other multi-choice mode.
+    serial = _morse_serial_singleton
+    if serial is None:
+        return
+    try:
+        while serial.get_message(timeout=0.02) is not None:
+            pass
+    except Exception as e:
+        logger.debug(f"Could not drain the button queue: {e}")
 
-    Priority order (same pattern as the OCR explanation prompt):
-      1. Physical Pico W button press  — Button 1/2/3 within `timeout` seconds
-      2. Microphone                    — spoken word matched against options_map values
-      3. Keyboard fallback             — for laptop/development testing only
-      4. Returns None                  — caller must handle gracefully
 
-    options_map examples:
-      {"1": "1", "2": "2", "3": "3"}          — numeric choices
-      {"1": "hindi", "2": "gujarati", ...}     — spoken language names
+def _button_choice(valid: tuple, timeout: float = None, double: str = None,
+                   drain: bool = True) -> str | None:
+    """One menu answer from the physical buttons. No microphone, no keyboard.
+
+    Returns "1"/"2"/"3", or `double` repeated (e.g. "22") when that button is
+    pressed twice within _BUTTON_DOUBLE_WINDOW_S, or None if nothing was
+    pressed in time.
     """
-    # Build a flat set of all valid keys and spoken aliases for mic matching
-    valid_keys  = set(options_map.keys())
-    spoken_vals = {v.lower(): k for k, v in options_map.items()}
+    serial = _morse_serial_singleton
+    if serial is None:
+        return None
 
-    # ── 1. Physical button (Pico W) ───────────────────────────────────────
+    if drain:
+        _drain_button_messages()
+    deadline = time.time() + (_BUTTON_CHOICE_TIMEOUT_S if timeout is None else timeout)
+
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return None
+        try:
+            pressed = serial.wait_for_raw_button(timeout=remaining)
+        except Exception as e:
+            logger.warning(f"Button read failed: {e}")
+            return None
+        if pressed is None:
+            return None
+
+        key = str(pressed)
+        if key not in valid:
+            continue                    # a button this menu does not use
+
+        if double and key == double:
+            # A single press only means what it says once the window for a
+            # second press has passed, so resolve that before returning.
+            try:
+                again = serial.wait_for_raw_button(timeout=_BUTTON_DOUBLE_WINDOW_S)
+            except Exception:
+                again = None
+            if again is not None and str(again) == double:
+                return double * 2
+            if again is not None:
+                logger.debug(f"Ignored button {again} inside the double-press window.")
+        return key
+
+
+def _select_with_buttons(valid: tuple, prompt: str,
+                         double: str = None) -> str | None:
+    """Speak a menu, then take the answer from the buttons.
+
+    The prompt is spoken with block=True so the answer window does not start
+    counting down while the options are still being read out.
+
+    Stale presses are dropped BEFORE the prompt rather than after it. Draining
+    afterwards would also throw away a press made while the menu was being
+    spoken, forcing anyone who already knows the menu to press twice; draining
+    first still removes the press that entered this mode, which is the one that
+    would otherwise answer the question by itself.
+    """
+    _drain_button_messages()
+    _speak(prompt, block=True)
+
     if _morse_serial_singleton is not None:
-        try:
-            btn = _morse_serial_singleton.wait_for_raw_button(timeout=timeout)
-            if btn is not None:
-                key = str(btn)
-                if key in valid_keys:
-                    return key
-                # Button number not in map — still return it so caller can decide
-                return key
-        except Exception as e:
-            logger.debug(f"Button read error in choice getter: {e}")
+        return _button_choice(valid, double=double, drain=False)
 
-    # ── 2. Microphone fallback ────────────────────────────────────────────
-    if _has("voice"):
-        try:
-            spoken = _listen("en-IN")
-            if spoken:
-                spoken_lower = spoken.lower().strip()
-                # Direct key match  ("1", "2" etc spoken as a word)
-                if spoken_lower in valid_keys:
-                    return spoken_lower
-                # Spoken value match  ("hindi", "yes", "no", etc.)
-                for alias, key in spoken_vals.items():
-                    if alias in spoken_lower:
-                        return key
-                # Number words
-                number_words = {
-                    "one": "1", "two": "2", "three": "3", "four": "4",
-                    "five": "5", "six": "6", "seven": "7", "eight": "8",
-                }
-                for word, digit in number_words.items():
-                    if word in spoken_lower and digit in valid_keys:
-                        return digit
-        except Exception as e:
-            logger.debug(f"Voice choice error: {e}")
-
-    # ── 3. Keyboard fallback (headless Pi: skipped silently) ─────────────
-    kb = _keyboard_input("Choice: ", default=None)
-    if kb:
-        if kb in valid_keys:
-            return kb
-        # Accept number words typed on keyboard too
-        kb_lower = kb.lower()
-        if kb_lower in spoken_vals:
-            return spoken_vals[kb_lower]
-
-    return None
+    # No Pico attached at all — laptop simulation, per CLAUDE.md. This is never
+    # reached on the device, where the buttons are the only selector; on a
+    # headless Pi with no TTY _keyboard_input() returns the default and the
+    # caller cancels cleanly.
+    logger.info("No Pico W connected — Mode 4 menu falling back to the keyboard.")
+    typed = _keyboard_input("Choice: ", default=None)
+    if not typed:
+        return None
+    typed = typed.strip()
+    if double and typed == double * 2:
+        return double * 2
+    return typed if typed in valid else None
 
 
 def mode_translate():
@@ -670,10 +715,9 @@ def mode_translate():
     Step 3 — ask WHICH direction to translate (EN→HI / EN→GU / HI→EN / GU→EN)
     Step 4 — translate and speak the result
 
-    Every selection step works via:
-      • Pico W physical buttons  (Button 1/2/3)
-      • Microphone  (say "one", "hindi", "yes", etc.)
-      • Keyboard  (laptop / development fallback)
+    Both menus are answered with the three physical buttons only. Step 3 has
+    four options and there are three buttons, so Gujarati to English is a
+    double press of Button 2 — see _button_choice().
     """
     logger.info("Mode 4: Translate")
 
@@ -682,23 +726,21 @@ def mode_translate():
         return
 
     # ── STEP 1: Choose input method ───────────────────────────────────────
-    _speak(
-        "Translation mode. "
-        "Press 1 or say 'one' to type your text. "
-        "Press 2 or say 'two' to use Morse code buttons. "
-        "Press 3 or say 'three' to speak your text."
-    )
-    print("\n[Mode 4 — Translate]")
-    print("  1 → Type text")
-    print("  2 → Morse code buttons (Pico W)")
-    print("  3 → Voice / microphone")
+    print("\n[Mode 4 — Translate]  input method")
+    print("  Button 1 → Type text")
+    print("  Button 2 → Morse code buttons")
+    print("  Button 3 → Voice / microphone")
 
-    input_choice = _get_button_or_voice_choice(
-        {"1": "type", "2": "morse", "3": "voice"}, timeout=8.0
+    input_choice = _select_with_buttons(
+        ("1", "2", "3"),
+        "Translation mode. "
+        "Press button 1 to type your text. "
+        "Press button 2 to enter it in Morse code. "
+        "Press button 3 to speak it."
     )
 
     if input_choice not in ("1", "2", "3"):
-        _speak("No valid selection received. Translation cancelled.")
+        _speak("No button was pressed. Translation cancelled.")
         return
 
     # ── STEP 2: Get the source text ───────────────────────────────────────
@@ -721,15 +763,28 @@ def mode_translate():
             _speak("Morse module is not available. Please try option 1 or 3 instead.")
             return
 
+        _prompt_started = time.time()
         _speak(
             "Morse input mode. "
             "Tap Button 1 for dot and Button 2 for dash. "
             "Pause 1.5 seconds to finish a letter. "
-            "Double-press Button 3 to confirm the full word and send it."
+            "Double-press Button 3 to confirm the full word and send it.",
+            block=True
         )
 
         # Use MorseSerial if Pico W is connected, else fall back to keyboard Morse
         if _morse_serial_singleton is not None:
+            # Button 2 selected this mode, and the Pico is still holding that
+            # press as a dash. Let its letter gap expire and throw away what it
+            # produces, or every word typed here begins with a phantom "T".
+            # Speaking the prompt normally covers the gap on its own; this only
+            # tops up the remainder if speech was unavailable and returned at
+            # once.
+            _waited = time.time() - _prompt_started
+            if _waited < _BUTTON_LETTER_SETTLE_S:
+                time.sleep(_BUTTON_LETTER_SETTLE_S - _waited)
+            _drain_button_messages()
+
             try:
                 typed = _morse_serial_singleton.type_word(timeout=60)
                 text = typed.strip() if typed else None
@@ -777,34 +832,33 @@ def mode_translate():
         return
 
     # ── STEP 3: Choose translation direction ──────────────────────────────
-    _speak(
-        "Which translation do you want? "
-        "Press 1 or say 'hindi'    for English to Hindi. "
-        "Press 2 or say 'gujarati' for English to Gujarati. "
-        "Press 3 or say 'english'  for Hindi to English. "
-        "Press 4 or say 'gujarati english' for Gujarati to English."
-    )
-    print("\n  1 → English → Hindi")
-    print("  2 → English → Gujarati")
-    print("  3 → Hindi   → English")
-    print("  4 → Gujarati → English")
+    # Four directions, three buttons: the fourth is a double press of Button 2.
+    print("\n  Button 1        → English  → Hindi")
+    print("  Button 2        → English  → Gujarati")
+    print("  Button 3        → Hindi    → English")
+    print("  Button 2 twice  → Gujarati → English")
 
-    direction_choice = _get_button_or_voice_choice(
-        {"1": "hindi", "2": "gujarati", "3": "english", "4": "gujarati english"},
-        timeout=8.0
+    direction_choice = _select_with_buttons(
+        ("1", "2", "3"),
+        "Which translation do you want? "
+        "Press button 1 for English to Hindi. "
+        "Press button 2 for English to Gujarati. "
+        "Press button 3 for Hindi to English. "
+        "Press button 2 twice for Gujarati to English.",
+        double="2"
     )
 
     pairs = {
         "1": ("en", "hi"),
         "2": ("en", "gu"),
         "3": ("hi", "en"),
-        "4": ("gu", "en"),
+        "22": ("gu", "en"),
     }
     direction_labels = {
         "1": "English to Hindi",
         "2": "English to Gujarati",
         "3": "Hindi to English",
-        "4": "Gujarati to English",
+        "22": "Gujarati to English",
     }
 
     if direction_choice not in pairs:
