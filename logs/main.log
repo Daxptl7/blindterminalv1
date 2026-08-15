@@ -3490,3 +3490,46 @@ HARRY POTER..."
 2026-08-12 22:55:35,156 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
 2026-08-12 22:55:39,154 [INFO] TTS Manager shut down.
 2026-08-12 22:55:39,156 [INFO] Shutdown complete.
+2026-08-15 15:27:09,727 [INFO] pygame.mixer initialised on default device.
+2026-08-15 15:27:09,730 [INFO] Module loaded: tts
+2026-08-15 15:27:09,761 [INFO] Vosk not installed (pip install vosk) — offline STT unavailable.
+2026-08-15 15:27:09,762 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-08-15 15:27:09,762 [WARNING] STT engines active: google — all need internet.
+2026-08-15 15:27:09,763 [INFO] Recordings will be saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/blindassist-recordings
+2026-08-15 15:27:09,764 [INFO] Module loaded: voice
+2026-08-15 15:27:09,767 [INFO] Module loaded: ai_query
+2026-08-15 15:27:09,768 [INFO] Morse decoder started with auto-timing.
+2026-08-15 15:27:09,768 [INFO] Module loaded: morse
+2026-08-15 15:27:09,770 [INFO] Module loaded: ocr
+2026-08-15 15:27:09,770 [INFO] Module loaded: translator
+2026-08-15 15:27:09,770 [INFO] Module loaded: gesture_control
+2026-08-15 15:27:09,771 [INFO] Module loaded: emotion_engine
+2026-08-15 15:27:09,771 [INFO] Module loaded: gps_navigator
+2026-08-15 15:27:09,796 [INFO] Module loaded: confidential_mode
+2026-08-15 15:27:09,799 [WARNING] yolo_model_path '/mnt/aet_usb/models/yolov8m.pt' not found; searching for weights.
+2026-08-15 15:27:09,800 [WARNING] No YOLO weights found locally; ultralytics will try to download yolov8n.pt.
+2026-08-15 15:27:09,801 [INFO] Module loaded: object_detection
+2026-08-15 15:27:09,802 [WARNING] Pico W Morse buttons unavailable, using keyboard fallback: No Pico W detected. Check the USB cable connection.
+2026-08-15 15:27:09,803 [INFO] Mode 2: Morse Type
+2026-08-15 15:27:09,805 [WARNING] Gemini OCR unavailable, falling back to local OCR: network down
+2026-08-15 15:27:09,809 [INFO] Loading faiss.
+2026-08-15 15:27:10,003 [INFO] Successfully loaded faiss.
+2026-08-15 15:27:10,512 [ERROR] Unsupported file type for indexing: .bin
+2026-08-15 15:27:10,513 [INFO] Translating from English to Hindi: "hello..."
+2026-08-15 15:27:10,514 [INFO] Translation result: "नमस्ते..."
+2026-08-15 15:27:10,515 [INFO] Vector store saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/tmp2gjzpzam
+2026-08-15 15:27:10,516 [WARNING] Embedding dimension changed from 3 to 4. Dropping incompatible local vectors; re-index documents for best RAG results.
+2026-08-15 15:27:10,516 [INFO] Vector store saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/tmp2gjzpzam
+2026-08-15 15:27:10,516 [WARNING] Query embedding dimension 3 does not match vector store dimension 4. Re-index documents with the current embedding model.
+2026-08-15 15:27:10,517 [WARNING] Ignoring legacy metadata.pkl because pickle can execute code. Set BLINDASSIST_TRUST_LEGACY_PICKLE=1 once to migrate a trusted local store.
+2026-08-15 15:27:10,856 [INFO] Morse decoder started with auto-timing.
+2026-08-15 15:27:12,359 [INFO] Decoded: .- -> A
+2026-08-15 15:27:13,859 [INFO] Word complete: A
+2026-08-15 15:27:13,871 [INFO] Streaming detection active (display=False)
+2026-08-15 15:27:13,872 [INFO] Object detection stopped by callback.
+2026-08-15 15:27:13,901 [INFO] Described diagram: fig1.png
+2026-08-15 15:27:13,902 [INFO] Skipping remote image reference: https://evil.example/x.png
+2026-08-15 15:27:13,902 [WARNING] Skipping image outside document directory: ../../../etc/passwd
+2026-08-15 15:27:13,903 [INFO] Shutting down...
+2026-08-15 15:27:13,903 [INFO] Shutdown complete.
+2026-08-15 15:27:14,849 [INFO] TTS Manager ready.

@@ -282,6 +282,37 @@ def _voice():
     return None
 
 
+_tts_module = None
+_tts_lookup_done = False
+
+
+def _tts():
+    """tts.py, or None. Imported lazily, exactly like _voice().
+
+    tts.py is the project's one speech backend, and the only thing here that
+    knows how to synthesise the natural gTTS voice the rest of the device
+    speaks with. A missing or broken tts.py must never stop an answer being
+    delivered, so this is best-effort and the espeak path below remains as the
+    fallback.
+    """
+    global _tts_module, _tts_lookup_done
+    if _tts_lookup_done:
+        return _tts_module
+    _tts_lookup_done = True
+    for path in ("modules.tts", "tts"):
+        try:
+            module = __import__(path, fromlist=["*"])
+            if hasattr(module, "speak_on_device"):
+                _tts_module = module
+                return _tts_module
+            logger.info(f"{path} has no speak_on_device() — using espeak for routed speech.")
+            return None
+        except Exception:
+            continue
+    logger.info("tts.py not importable — routed speech will use espeak.")
+    return None
+
+
 def _speaker_device() -> Optional[str]:
     v = _voice()
     return getattr(v, "SPEAKER_DEVICE", None) if v else None
@@ -294,18 +325,35 @@ def _earphone_device() -> Optional[str]:
 
 def _say_on_device(text: str, device: Optional[str],
                    speak_fn: Optional[Callable] = None) -> bool:
-    """Say something on a specific card.
+    """Say something on a specific card, in the device's normal voice.
 
-    espeak-to-WAV then `aplay -D` is the only path here that can target a card,
-    which is the whole point of the routing. speak_fn is the fallback for a
-    device with no espeak installed — it will not honour the chosen card, but a
-    spoken answer on the wrong speaker beats no answer at all.
+    tts.py is tried first. It synthesises with gTTS — the same voice every
+    other prompt on this device uses — and plays it on `device`. This module
+    used to synthesise the answer itself with espeak, which made the AI's
+    answer the *only* utterance produced by a formant synthesiser: audibly
+    buzzy and creaky next to the gTTS prompt that had just introduced it.
+    espeak was never a voice choice, only the one thing known to hit a
+    specific card; tts.speak_on_device() does that with the good voice.
+
+    espeak-to-WAV plus `aplay -D` stays as the offline fallback, and speak_fn
+    as the last resort — it will not honour the chosen card, but a spoken
+    answer on the wrong speaker beats no answer at all.
     """
     if not device:
         if speak_fn:
             speak_fn(text)
             return True
         return False
+
+    tts = _tts()
+    if tts is not None:
+        try:
+            # block=True: callers ask the user a question straight afterwards
+            # and must not race the audio.
+            tts.speak_on_device(text, device, block=True)
+            return True
+        except Exception as e:
+            logger.warning(f"tts.py could not speak on {device} ({e}); using espeak.")
 
     espeak = shutil.which("espeak-ng") or shutil.which("espeak")
     aplay = shutil.which("aplay")
@@ -315,11 +363,29 @@ def _say_on_device(text: str, device: Optional[str],
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 path = tmp.name
             rate = str(int(_settings.get("tts_rate", 130)))
-            subprocess.run([espeak, "-s", rate, "-w", path, text], timeout=60,
+            # -a 175 lifts espeak's quiet default, -g 4 spaces words slightly.
+            # Both make the fallback voice easier to follow; neither can fail
+            # in a way that produces no file, and the size check below catches
+            # it if the build rejects a flag.
+            base = [espeak, "-s", rate, "-a", "175", "-g", "4", "-w", path, text]
+            subprocess.run(base, timeout=60,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if os.path.getsize(path) > 44:
-                subprocess.run([aplay, "-q", "-D", device, path], timeout=600,
+            if os.path.getsize(path) <= 44:
+                subprocess.run([espeak, "-s", rate, "-w", path, text], timeout=60,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.getsize(path) > 44:
+                # An explicit 500 ms ALSA ring buffer. aplay's default is a few
+                # tens of milliseconds, which underruns — heard as crackling
+                # mid-sentence — whenever the Pi is busy. Retry without the
+                # timings if a card refuses them.
+                tuned = [aplay, "-q", "-D", device, "--buffer-time", "500000",
+                         "--period-time", "100000", path]
+                result = subprocess.run(tuned, timeout=600,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL)
+                if result.returncode != 0:
+                    subprocess.run([aplay, "-q", "-D", device, path], timeout=600,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
         except Exception as e:
             logger.warning(f"Routed speech failed on {device}: {e}")
@@ -731,6 +797,7 @@ if __name__ == "__main__":
     print(f"  speaker  {_speaker_device()}")
     print(f"  earphone {_earphone_device()}")
     print(f"  espeak   {bool(shutil.which('espeak-ng') or shutil.which('espeak'))}")
+    print(f"  voice    {'tts.py / gTTS' if _tts() else 'espeak (fallback)'}")
 
     while True:
         try:

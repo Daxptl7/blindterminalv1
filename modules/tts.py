@@ -120,7 +120,12 @@ try:
 
     # gTTS returns 24 kHz MP3; matching the mixer rate avoids pitch-shifted
     # ("chipmunk") playback that the old hardcoded 22050 Hz produced.
-    pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=1024)
+    #
+    # buffer=4096 (~170 ms at 24 kHz), not 1024 (~42 ms): the Pi runs OCR,
+    # object detection and AI inference alongside playback, and a 42 ms buffer
+    # underruns whenever the CPU is busy — heard as crackling in the middle of
+    # an utterance. Latency of 170 ms is imperceptible for speech.
+    pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=4096)
     PYGAME_AVAILABLE = True
     _current_device = "default"
     logger.info("pygame.mixer initialised on default device.")
@@ -189,6 +194,21 @@ def _decode_mp3_to_wav(data: bytes) -> bytes:
         return b""
 
 
+# ALSA ring-buffer sizing for the routed players. The defaults are a few tens
+# of milliseconds, which underrun — audibly, as crackling and clicks — whenever
+# the Pi is busy synthesising, inferring or driving the camera at the same time
+# as it plays. Half a second of buffer costs nothing perceptible for speech and
+# makes playback immune to ordinary CPU spikes.
+_ALSA_BUFFER_US = "500000"     # 500 ms ring buffer
+_ALSA_PERIOD_US = "100000"     # 100 ms per period
+
+
+def _aplay_args(aplay: str, device: str, path: str) -> list:
+    return [aplay, "-q", "-D", device,
+            "--buffer-time", _ALSA_BUFFER_US,
+            "--period-time", _ALSA_PERIOD_US, path]
+
+
 def _routed_commands(path: str, fmt: str, device: str) -> list:
     """Playback commands that genuinely honour `device`, best first."""
     commands = []
@@ -196,11 +216,17 @@ def _routed_commands(path: str, fmt: str, device: str) -> list:
     ffmpeg = shutil.which("ffmpeg")
 
     if fmt == "wav" and aplay:
+        commands.append(_aplay_args(aplay, device, path))
+        # Same player without the buffer tuning, in case an exotic card
+        # rejects the explicit timings. Never leave the user with no audio.
         commands.append([aplay, "-q", "-D", device, path])
     if fmt == "mp3":
         for name in ("mpg123", "mpg321"):
             binary = shutil.which(name)
             if binary:
+                # -b prebuffers 1 MB of decoded audio so a stalled decoder
+                # cannot starve the sound card mid-sentence.
+                commands.append([binary, "-q", "-b", "1024", "-a", device, path])
                 commands.append([binary, "-q", "-a", device, path])
                 break
         if ffmpeg:
@@ -250,11 +276,16 @@ class _Utterance:
     hang behind unrelated queued speech.
     """
 
-    __slots__ = ("text", "lang", "done")
+    __slots__ = ("text", "lang", "done", "device")
 
-    def __init__(self, text, lang):
+    def __init__(self, text, lang, device=None):
         self.text = text
         self.lang = lang
+        # None → use whatever switch_output_device() last selected. A value
+        # pins *this* utterance to one card without disturbing that global
+        # selection, so a routed answer cannot leave Confidential Mode's
+        # device state changed behind it.
+        self.device = device
         self.done = threading.Event()
 
 
@@ -474,7 +505,7 @@ class TTSManager:
             logger.error(f"Direct pyttsx3 playback failed: {e}")
             return False
 
-    def _deliver(self, text: str, lang: str):
+    def _deliver(self, text: str, lang: str, device_override: str = None):
         """Speak `text`, trying every backend. Never silently drops the message."""
         self._speaking.set()
         try:
@@ -485,7 +516,7 @@ class TTSManager:
                 # routing is a correctness requirement — try the device-aware
                 # players first and only fall back to the default output if
                 # none of them can drive that card at all.
-                device = None if IS_MACOS else _current_device
+                device = None if IS_MACOS else (device_override or _current_device)
                 if device not in (None, "default"):
                     if self._play_routed(data, fmt, device):
                         return
@@ -523,7 +554,7 @@ class TTSManager:
 
             try:
                 logger.info(f'Speaking: "{item.text[:60]}"')
-                self._deliver(item.text, item.lang)
+                self._deliver(item.text, item.lang, item.device)
             except Exception as e:
                 logger.error(f"TTS error: {e}")
                 print(f"[TTS FALLBACK] {item.text}", flush=True)
@@ -532,14 +563,15 @@ class TTSManager:
                 self.queue.task_done()
 
     # ── PUBLIC API ───────────────────────────────────────────
-    def speak(self, text: str, lang: str = "eng", block: bool = False, timeout: float = 120.0):
+    def speak(self, text: str, lang: str = "eng", block: bool = False,
+              timeout: float = 120.0, device: str = None):
         if not text or not str(text).strip():
             return
         if not self.running:
             print(f"[TTS after shutdown] {text}", flush=True)
             return
 
-        item = _Utterance(str(text), lang)
+        item = _Utterance(str(text), lang, device)
         self.queue.put(item)
         if block:
             item.done.wait(timeout=timeout)
@@ -624,6 +656,28 @@ def _get_manager() -> TTSManager:
 
 def speak(text: str, lang: str = "eng", block: bool = False):
     _get_manager().speak(text, lang, block)
+
+
+def speak_on_device(text: str, device: str, lang: str = "eng",
+                    block: bool = True, timeout: float = 300.0):
+    """Speak `text` on one named ALSA card, using the normal synthesis chain.
+
+    This is the good voice (gTTS, falling back to pyttsx3) delivered to a
+    chosen card. Callers that need routing — Confidential Mode's
+    earphone/speaker split, and the AI answer — used to synthesise with espeak
+    themselves purely because espeak-to-WAV plus `aplay -D` was the only thing
+    they knew could target a card. That made the AI's answer the one utterance
+    on the device spoken by a formant synthesiser: buzzy and creaky, and
+    obviously different from every other prompt the user hears.
+
+    Routing here is per-utterance, so it never mutates the global device
+    selection, and it goes through the same queue as ordinary speech, so a
+    routed answer cannot overlap with a queued prompt.
+
+    Defaults to block=True: every caller that routes speech has to know when
+    the utterance finished (it is about to ask the user a question).
+    """
+    _get_manager().speak(text, lang, block=block, timeout=timeout, device=device)
 
 
 def set_rate(rate: int):
