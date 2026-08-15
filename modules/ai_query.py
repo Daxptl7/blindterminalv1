@@ -405,12 +405,33 @@ def _say_on_device(text: str, device: Optional[str],
     return False
 
 
+def _drain_stdin():
+    """Discard input typed before the question was asked — it is not an answer.
+
+    Keystrokes sit in the terminal buffer until something reads them, so an
+    impatient ENTER pressed while the AI was thinking would otherwise be
+    consumed here, and a stale "2" would put a confidential answer on the open
+    speaker. voice.py drains for the same reason before it records.
+    """
+    if sys.stdin is None or not sys.stdin.isatty():
+        return
+    try:
+        import termios
+
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception as e:
+        logger.debug(f"Could not drain stdin: {e}")
+
+
 def _wait_for_route_choice(timeout: float) -> Optional[str]:
     """Wait for Button 1 or Button 2, or a typed 1/2 at a terminal."""
     v = _voice()
     deadline = time.time() + timeout
     tty = sys.stdin is not None and sys.stdin.isatty()
     has_buttons = False
+
+    if tty:
+        _drain_stdin()
 
     if v is not None and hasattr(v, "_wait_for_button"):
         try:

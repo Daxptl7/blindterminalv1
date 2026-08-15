@@ -693,6 +693,40 @@ def _unmute_microphone():
 _unmute_microphone()
 
 
+def _drain_stdin():
+    """Discard anything already typed but not yet read.
+
+    Keystrokes buffer in the terminal indefinitely while nothing is reading
+    them. A stray ENTER — pressed at an earlier prompt that had already timed
+    out, or out of impatience while the AI was thinking — therefore survives in
+    the buffer until the *next* reader consumes it, which is the recording
+    loop's stop-on-ENTER check. The recording then ends within a millisecond of
+    starting and reports "no audio captured", looking exactly like a dead
+    microphone.
+
+    Input typed before recording began cannot have been meant to stop a
+    recording that did not exist yet, so it is dropped here.
+    """
+    if sys.stdin is None or not sys.stdin.isatty():
+        return
+    try:
+        import termios
+
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+        return
+    except Exception as e:
+        logger.debug(f"tcflush unavailable ({e}); draining with select.")
+
+    try:
+        import select
+
+        while select.select([sys.stdin], [], [], 0)[0]:
+            if not os.read(sys.stdin.fileno(), 4096):
+                break
+    except Exception as e:
+        logger.debug(f"Could not drain stdin: {e}")
+
+
 def _beep(device: Optional[str] = None, freq: float = 880.0, duration: float = 0.12):
     """Earcon so a blind user knows the microphone went live.
 
@@ -810,6 +844,8 @@ def record(stop_check: Optional[Callable[[], bool]] = None,
         how = ("three presses of Button 3, or ENTER here"
                if buttons_live else "ENTER here")
         print(f"\n🔴 Recording from {MIC_DEVICE} — {how} — to stop…")
+        # Only ENTER pressed from here on may stop this recording.
+        _drain_stdin()
 
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
@@ -979,6 +1015,9 @@ def play_with_privacy_prompt(path: Optional[str] = None,
     if tty:
         print(f"\n🔒 {question}")
         print(f"   (or type 1 / 2 here — {wait_s:.0f}s, then the speaker)")
+        # A key pressed before the question was asked is not an answer to it,
+        # and a stale "2" would put confidential audio on the open speaker.
+        _drain_stdin()
 
     choice: Optional[str] = None
     deadline = time.time() + wait_s
