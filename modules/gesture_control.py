@@ -48,6 +48,7 @@ import sys
 import signal
 import logging
 import json
+import os
 import time
 import cv2
 import numpy as np
@@ -348,15 +349,138 @@ def _callback_allows_continue(callback_fn: Optional[Callable], gesture: str) -> 
     return result is not False
 
 
-def _open_camera(camera_index: int):
-    cap = cv2.VideoCapture(camera_index)
+# Gesture control uses the WIRED USB camera. The CSI Camera Module on the Pi's
+# ribbon connector belongs to OCR (ocr.py drives it through rpicam-still), and
+# its kernel nodes must never be picked up here: several of them open
+# successfully and then deliver nothing, which is indistinguishable from a
+# broken camera at the point where it matters.
+_NON_CAMERA_NODE_HINTS = ("unicam", "bcm2835-isp", "rpivid", "pispbe",
+                          "codec", "hevc", "isp", "stat", "meta")
+
+
+def _v4l2_nodes() -> list:
+    """(is_usb, index) for every /dev/video* node that could be a camera.
+
+    A Raspberry Pi publishes a dozen video nodes — ISP stages, codecs and
+    metadata streams alongside real cameras — so the index that happens to be
+    free is not the index that has a lens on it. Reading the driver name and
+    the bus each node sits on is what separates the wired webcam from the rest.
+    """
+    nodes = []
+    base = "/sys/class/video4linux"
+    if not os.path.isdir(base):
+        return nodes                       # not Linux: caller scans blindly
+
+    for entry in sorted(os.listdir(base)):
+        if not entry.startswith("video"):
+            continue
+        try:
+            index = int(entry[len("video"):])
+        except ValueError:
+            continue
+
+        name = ""
+        try:
+            with open(os.path.join(base, entry, "name")) as f:
+                name = f.read().strip().lower()
+        except OSError:
+            pass
+        if any(hint in name for hint in _NON_CAMERA_NODE_HINTS):
+            continue
+
+        try:
+            bus = os.path.realpath(os.path.join(base, entry, "device")).lower()
+        except OSError:
+            bus = ""
+        nodes.append(("usb" in bus, index, name))
+
+    # USB first, then by index, so the wired camera wins even when a CSI node
+    # sorts ahead of it.
+    nodes.sort(key=lambda item: (not item[0], item[1]))
+    return nodes
+
+
+def _probe_v4l2(index: int):
+    """Open a V4L2 index and confirm it actually yields a frame, else None.
+
+    isOpened() alone is not proof. Several Pi video nodes open cleanly and then
+    never produce an image, and accepting one of those is how gesture mode ends
+    up watching a camera that shows nothing.
+    """
+    cap = cv2.VideoCapture(index)
     if not cap.isOpened():
         cap.release()
         return None
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS,          30)
-    return cap
+    for _ in range(5):                     # warmup doubles as proof of life
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            return cap
+    cap.release()
+    return None
+
+
+def _open_camera(camera_index: Optional[int]):
+    """Open the wired USB camera. The configured index is only a hint.
+
+    gesture_camera_index was 8 on the device — a node that does not exist — and
+    the mode reported "Camera failed: index 8" and gave up while a working USB
+    camera was plugged in. The index is tried first if it is real, and
+    otherwise the USB cameras found on the bus are tried in order.
+    """
+    nodes = _v4l2_nodes()
+    usb_indices = [index for is_usb, index, _ in nodes if is_usb]
+    other_indices = [index for is_usb, index, _ in nodes if not is_usb]
+
+    if nodes:
+        logger.info("Video nodes: " + ", ".join(
+            f"video{index}{'(usb)' if is_usb else ''}"
+            f"{' ' + name if name else ''}" for is_usb, index, name in nodes))
+
+    order = []
+    if camera_index is not None and camera_index >= 0:
+        order.append(camera_index)
+    order += [i for i in usb_indices if i not in order]
+    order += [i for i in other_indices if i not in order]
+    if not nodes:                          # no sysfs (macOS): scan blindly
+        order += [i for i in range(0, 11) if i not in order]
+
+    # Probing absent indices makes OpenCV shout on stderr; quiet it for the
+    # scan so the successful result is not buried in warnings.
+    previous_level = None
+    try:
+        previous_level = cv2.utils.logging.getLogLevel()
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
+    except Exception:
+        previous_level = None
+
+    try:
+        for index in order:
+            cap = _probe_v4l2(index)
+            if cap is None:
+                continue
+            if index != camera_index:
+                logger.warning(
+                    f"gesture_camera_index={camera_index} is not a working "
+                    f"camera; using index {index}. Set gesture_camera_index "
+                    f"to {index} in settings.json to skip this search.")
+            else:
+                logger.info(f"Gesture camera ready on index {index}.")
+            return cap
+    finally:
+        if previous_level is not None:
+            try:
+                cv2.utils.logging.setLogLevel(previous_level)
+            except Exception:
+                pass
+
+    logger.error(
+        "No working USB camera found for gesture control. Check that the wired "
+        "camera is plugged in — `v4l2-ctl --list-devices` shows what the Pi "
+        "sees. The CSI camera is not used here; it belongs to OCR.")
+    return None
 
 
 def _create_task_detector(model_path: Path):
@@ -461,7 +585,14 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
 
     cap = _open_camera(camera_index)
     if cap is None:
-        logger.error(f"Camera failed: index {camera_index}")
+        # _open_camera has already logged what it tried and what to check.
+        # Tell the caller, so the mode can say it out loud instead of dropping
+        # the user back at the menu with no explanation.
+        if callback_fn is not None:
+            try:
+                callback_fn("CAMERA_UNAVAILABLE")
+            except Exception as e:
+                logger.debug(f"Camera-failure callback raised: {e}")
         detector.close()
         return
 

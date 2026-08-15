@@ -885,46 +885,141 @@ def mode_translate():
     logger.info(f"Translated [{src}→{dest}]: {text[:80]} → {result[:80]}")
 
 
+# A gesture proposes a mode; it never launches one on its own. A hand held in
+# front of a camera drifts through shapes on its way to the one it means, and
+# acting on each of those switched modes under the user with no warning and no
+# way back. Every switch is now confirmed with a thumbs up, so a misread costs
+# a moment rather than a mode.
+_GESTURE_ACTIONS = {
+    "MODE_SCAN":  "O C R scan",
+    "MODE_VOICE": "voice question",
+}
+_GESTURE_CONFIRM_S = float(_settings.get("gesture_confirm_seconds", 10.0))
+_GESTURE_MAX_S = float(_settings.get("gesture_max_seconds", 180.0))
+
+
 def mode_gesture():
-    """Mode 5: Gesture control"""
+    """Mode 5: Gesture control — propose, confirm, then switch."""
     logger.info("Mode 5: Gesture")
 
     if not _has("gesture"):
         _speak("Gesture control is not available.")
         return
 
-    _speak("Gesture mode activated. Show your hand to the camera.")
+    if _morse_serial_singleton is not None:
+        _speak("Gesture mode. Show your hand to the wired camera. "
+               "Open palm for O C R scan, two fingers for a voice question. "
+               "Then thumbs up to confirm, or a fist to cancel. "
+               "Press any button to leave gesture mode.", block=True)
+    else:
+        _speak("Gesture mode. Show your hand to the wired camera. "
+               "Open palm for O C R scan, two fingers for a voice question. "
+               "Then thumbs up to confirm, or a fist to cancel. "
+               "Press Enter to leave gesture mode.", block=True)
 
     active_action = None
-    stop_gesture = threading.Event()
+    camera_failed = False
+    pending = None
+    pending_since = 0.0
 
     def on_gesture(name):
-        nonlocal active_action
-        _speak(f"Gesture: {name}")
-        if name == "STOP":
-            _speak("Gesture control stopped.")
+        """Called once per debounced gesture. False stops the detection loop."""
+        nonlocal active_action, pending, pending_since, camera_failed
+        now = time.time()
+
+        if name == "CAMERA_UNAVAILABLE":
+            camera_failed = True
             return False
-        if name in {"MODE_SCAN", "MODE_VOICE"}:
-            active_action = name
-            return False  # Release camera/mic resources by exiting loop
-        if name == "CONFIRM":
-            _speak("Confirmed.")
-        elif name == "REPEAT":
-            _speak("Repeat requested.")
+
+        # An old proposal must not be confirmable forever — the user may have
+        # walked away and come back, or forgotten it was offered.
+        if pending and now - pending_since > _GESTURE_CONFIRM_S:
+            _speak(f"{_GESTURE_ACTIONS[pending]} timed out.")
+            pending = None
+
+        if pending:
+            if name == "CONFIRM":
+                active_action = pending
+                pending = None
+                return False        # leave the loop so the camera is released
+            if name == "STOP":
+                _speak("Cancelled.")
+                pending = None
+                return True
+            return True             # ignore anything else while confirming
+
+        if name in _GESTURE_ACTIONS:
+            pending = name
+            pending_since = now
+            _speak(f"{_GESTURE_ACTIONS[name]}. Thumbs up to confirm.")
+            return True
+
+        if name == "STOP":
+            _speak("Leaving gesture mode.")
+            return False
+
+        logger.info(f"Gesture ignored (nothing pending): {name}")
         return True
 
     running = True
     while running:
-        _modules["gesture"].detect_gesture(callback_fn=on_gesture, stop_event=stop_gesture)
+        # A fresh stop signal per pass, and a watcher that exits before any
+        # sub-mode starts — otherwise it would still be consuming button
+        # presses that the OCR or voice mode is waiting for.
+        stop_gesture = threading.Event()
+        watcher_finished = threading.Event()
+        deadline = time.time() + _GESTURE_MAX_S
 
-        if active_action == "MODE_SCAN":
+        def _watch_for_stop(stop_gesture=stop_gesture,
+                            watcher_finished=watcher_finished,
+                            deadline=deadline):
+            while not stop_gesture.is_set() and not watcher_finished.is_set():
+                if time.time() > deadline:
+                    logger.info("Gesture mode hit its time limit.")
+                    stop_gesture.set()
+                    return
+                if _morse_serial_singleton is not None:
+                    try:
+                        if _morse_serial_singleton.wait_for_raw_button(timeout=0.5) is not None:
+                            stop_gesture.set()
+                            return
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Button read error in gesture watcher: {e}")
+                if _STDIN_IS_TTY:
+                    import select as _select
+                    if _select.select([sys.stdin], [], [], 0.5)[0]:
+                        sys.stdin.readline()
+                        stop_gesture.set()
+                        return
+                else:
+                    time.sleep(0.5)
+
+        watcher = threading.Thread(target=_watch_for_stop, daemon=True)
+        watcher.start()
+        try:
+            _modules["gesture"].detect_gesture(callback_fn=on_gesture,
+                                               stop_event=stop_gesture)
+        except Exception as e:
+            logger.error(f"Gesture detection failed: {e}")
+            _speak("Gesture control stopped because of an error.")
             active_action = None
-            mode_ocr_scan()
-            _speak("Resuming gesture control.")
-        elif active_action == "MODE_VOICE":
+        finally:
+            watcher_finished.set()
+            watcher.join(timeout=1.5)
+
+        if camera_failed:
+            _speak("I cannot see the wired camera. Please check that it is "
+                   "plugged in, then try gesture mode again.")
+            return
+
+        if active_action in _GESTURE_ACTIONS:
+            action = active_action
             active_action = None
-            mode_voice_ask()
-            _speak("Resuming gesture control.")
+            pending = None
+            _speak(f"Starting {_GESTURE_ACTIONS[action]}.")
+            {"MODE_SCAN": mode_ocr_scan, "MODE_VOICE": mode_voice_ask}[action]()
+            _speak("Back in gesture mode.")
         else:
             running = False
 
