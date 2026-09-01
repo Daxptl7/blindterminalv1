@@ -27,6 +27,7 @@ import threading
 import time
 import json
 
+from dataclasses import dataclass
 from pathlib import Path
 from PIL import Image
 
@@ -82,6 +83,12 @@ def _load_config() -> dict:
         "ocr_engine":       "auto",
         "ocr_surya_fallback": False,
         "ocr_preload":      False,
+        "ocr_capture_frames": 3,
+        "ocr_capture_width": 2304,
+        "ocr_capture_height": 1728,
+        "ocr_gemini_first": True,
+        "ocr_tesseract_min_confidence": 45,
+        "ocr_tesseract_psm_modes": "6,4,11",
         "gemini_api_key":   "",
         "gemini_model_name": "gemini-3-flash-lite",
         "gemini_timeout_s": 8,
@@ -101,6 +108,23 @@ def _load_config() -> dict:
 _config = _load_config()
 
 
+def _config_int(key: str, default: int, min_value: int, max_value: int) -> int:
+    try:
+        value = int(_config.get(key, default))
+    except Exception:
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _sharpness_score(frame: np.ndarray) -> float:
+    """Higher score means sharper text edges; used to pick the best capture."""
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    except Exception:
+        return 0.0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Low-level rpicam-still capture
 # ─────────────────────────────────────────────────────────────────────────────
@@ -113,14 +137,16 @@ def _rpicam_capture() -> "cv2 frame | None":
         logger.error(f"rpicam-still not found at: {RPICAM_BIN}")
         return None
 
-    tmp = os.path.join(tempfile.gettempdir(), "aet_ocr_cap.jpg")
+    tmp = os.path.join(tempfile.gettempdir(), f"aet_ocr_cap_{os.getpid()}_{time.time_ns()}.jpg")
+    width = str(_config_int("ocr_capture_width", 2304, 640, 4608))
+    height = str(_config_int("ocr_capture_height", 1728, 480, 3456))
     cmd = [
         RPICAM_BIN,
         "-o", tmp,
         "-n",                        # no preview window
         "-t", "2000",                # 2 s settle time for macro autofocus (ms)
-        "--width",   "1920",
-        "--height",  "1080",
+        "--width",   width,
+        "--height",  height,
         "--quality", "90",
     ]
 
@@ -205,15 +231,41 @@ class CameraManager:
     # ── capture ───────────────────────────────────────────────────────────────
     def capture(self) -> "cv2 frame | None":
         """Captures one BGR frame from whichever camera is active."""
+        capture_frames = _config_int("ocr_capture_frames", 3, 1, 5)
+
         if self._cam_type == "rpicam":
-            return _rpicam_capture()
+            best = None
+            best_score = -1.0
+            for _ in range(capture_frames):
+                frame = _rpicam_capture()
+                if frame is None:
+                    continue
+                score = _sharpness_score(frame)
+                if score > best_score:
+                    best = frame
+                    best_score = score
+            if best is not None:
+                logger.info(f"Selected sharpest Pi camera capture | score={best_score:.1f}")
+            return best
 
         if self._cam_type == "usb" and self._usb_cap:
-            time.sleep(0.5)               # brief settle for exposure
-            ret, frame = self._usb_cap.read()
-            if ret:
-                return frame
-            logger.error("USB camera read() returned False.")
+            best = None
+            best_score = -1.0
+            for _ in range(5):            # warm up exposure/focus
+                self._usb_cap.read()
+            for _ in range(capture_frames):
+                time.sleep(0.12)
+                ret, frame = self._usb_cap.read()
+                if not ret:
+                    continue
+                score = _sharpness_score(frame)
+                if score > best_score:
+                    best = frame
+                    best_score = score
+            if best is not None:
+                logger.info(f"Selected sharpest USB camera capture | score={best_score:.1f}")
+                return best
+            logger.error("USB camera read() returned no usable frame.")
             return None
 
         logger.error("capture() called but no camera is open.")
@@ -370,15 +422,37 @@ class SuryaOCREngine:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tesseract OCR Engine  (fast local default)
+# Tesseract OCR Engine  (high-accuracy local fallback)
 # ─────────────────────────────────────────────────────────────────────────────
+@dataclass
+class TesseractCandidate:
+    text: str
+    avg_confidence: float
+    word_count: int
+    variant: str
+    psm: int
+
+    @property
+    def score(self) -> float:
+        chars = len(self.text)
+        signal = sum(1 for ch in self.text if ch.isalpha() or ch.isdigit())
+        signal_ratio = signal / max(chars, 1)
+        noise_penalty = max(0.0, 0.45 - signal_ratio) * 80.0
+        return (
+            self.avg_confidence
+            + min(self.word_count * 1.8, 25.0)
+            + min(chars / 12.0, 20.0)
+            - noise_penalty
+        )
+
+
 class TesseractOCREngine:
     """
-    Fast local OCR path for Raspberry Pi and laptop use.
+    High-accuracy local OCR path for Raspberry Pi and laptop use.
 
-    Surya OCR 2 can be accurate, but the app logs show it can spend more than
-    a minute inside inference on the Pi. Tesseract is already a documented
-    dependency for this project and is the right default for interactive scans.
+    The old version ran one thresholded image through one page segmentation
+    mode. This version tries a small set of document-aware variants and keeps
+    the result with the strongest Tesseract confidence.
     """
     _instance = None
     _lock     = threading.Lock()
@@ -390,6 +464,7 @@ class TesseractOCREngine:
                     obj = super().__new__(cls)
                     obj._available  = None
                     obj._load_error = None
+                    obj._languages = None
                     cls._instance   = obj
         return cls._instance
 
@@ -415,25 +490,242 @@ class TesseractOCREngine:
         return False
 
     @staticmethod
-    def _prepare_image(pil_image: Image.Image) -> Image.Image:
-        image = np.array(pil_image.convert("RGB"))
+    def _parse_psm_modes() -> list[int]:
+        raw = _config.get("ocr_tesseract_psm_modes", "6,4,11")
+        parts = raw if isinstance(raw, (list, tuple)) else str(raw).split(",")
+        modes = []
+        for part in parts:
+            try:
+                mode = int(str(part).strip())
+            except Exception:
+                continue
+            if mode not in modes and 3 <= mode <= 13:
+                modes.append(mode)
+        return modes or [6, 4, 11]
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        lines = []
+        for line in str(text or "").splitlines():
+            line = re.sub(r"[ \t]+", " ", line).strip()
+            if line:
+                lines.append(line)
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _order_points(points: np.ndarray) -> np.ndarray:
+        rect = np.zeros((4, 2), dtype="float32")
+        pts = points.reshape(4, 2).astype("float32")
+        sums = pts.sum(axis=1)
+        diffs = np.diff(pts, axis=1)
+        rect[0] = pts[np.argmin(sums)]
+        rect[2] = pts[np.argmax(sums)]
+        rect[1] = pts[np.argmin(diffs)]
+        rect[3] = pts[np.argmax(diffs)]
+        return rect
+
+    @classmethod
+    def _four_point_transform(cls, image: np.ndarray, points: np.ndarray) -> np.ndarray | None:
+        rect = cls._order_points(points)
+        tl, tr, br, bl = rect
+        width_a = np.linalg.norm(br - bl)
+        width_b = np.linalg.norm(tr - tl)
+        height_a = np.linalg.norm(tr - br)
+        height_b = np.linalg.norm(tl - bl)
+        max_width = int(max(width_a, width_b))
+        max_height = int(max(height_a, height_b))
+        if max_width < 300 or max_height < 300:
+            return None
+
+        dst = np.array([
+            [0, 0],
+            [max_width - 1, 0],
+            [max_width - 1, max_height - 1],
+            [0, max_height - 1],
+        ], dtype="float32")
+        matrix = cv2.getPerspectiveTransform(rect, dst)
+        return cv2.warpPerspective(image, matrix, (max_width, max_height))
+
+    @classmethod
+    def _document_crop(cls, image: np.ndarray) -> np.ndarray | None:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 60, 180)
+        edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        image_area = image.shape[0] * image.shape[1]
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:6]:
+            area = cv2.contourArea(contour)
+            if area < image_area * 0.18:
+                continue
+            peri = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+            if len(approx) != 4 or not cv2.isContourConvex(approx):
+                continue
+            warped = cls._four_point_transform(image, approx)
+            if warped is not None:
+                ratio = max(warped.shape[:2]) / max(min(warped.shape[:2]), 1)
+                if ratio <= 3.5:
+                    return warped
+        return None
+
+    @staticmethod
+    def _deskew(gray: np.ndarray) -> np.ndarray:
+        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        coords = np.column_stack(np.where(thresh > 0))
+        if len(coords) < 120:
+            return gray
+
+        angle = cv2.minAreaRect(coords)[-1]
+        angle = -(90 + angle) if angle < -45 else -angle
+        if abs(angle) < 0.3 or abs(angle) > 15:
+            return gray
 
         height, width = gray.shape[:2]
-        if width < 1400:
-            scale = min(2.0, 1400 / max(width, 1))
-            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-
-        gray = cv2.bilateralFilter(gray, 7, 50, 50)
-        processed = cv2.adaptiveThreshold(
+        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
+        return cv2.warpAffine(
             gray,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            31,
-            11,
+            matrix,
+            (width, height),
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_REPLICATE,
         )
-        return Image.fromarray(processed)
+
+    @classmethod
+    def _variant_images(cls, pil_image: Image.Image) -> list[tuple[str, Image.Image]]:
+        image = np.array(pil_image.convert("RGB"))
+        bases = [("full", image)]
+        cropped = cls._document_crop(image)
+        if cropped is not None:
+            bases.insert(0, ("document", cropped))
+
+        variants = []
+        seen = set()
+        for base_name, base in bases:
+            gray = cv2.cvtColor(base, cv2.COLOR_RGB2GRAY)
+            height, width = gray.shape[:2]
+            if width < 1800:
+                scale = min(2.4, 1800 / max(width, 1))
+                gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            elif width > 3200:
+                scale = 3200 / width
+                gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+            gray = cls._deskew(gray)
+            clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8)).apply(gray)
+            denoised = cv2.fastNlMeansDenoising(clahe, h=12)
+            blur = cv2.GaussianBlur(denoised, (0, 0), 1.0)
+            sharp = cv2.addWeighted(denoised, 1.55, blur, -0.55, 0)
+            adaptive = cv2.adaptiveThreshold(
+                sharp,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                35,
+                11,
+            )
+            otsu = cv2.threshold(sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+            for name, arr in (
+                (f"{base_name}-enhanced", sharp),
+                (f"{base_name}-adaptive", adaptive),
+                (f"{base_name}-otsu", otsu),
+            ):
+                key = (arr.shape, int(arr.mean()), int(arr.std()))
+                if key in seen:
+                    continue
+                seen.add(key)
+                variants.append((name, Image.fromarray(arr)))
+
+        return variants[:6]
+
+    def _resolve_lang(self, pytesseract, lang: str) -> str:
+        configured = str(_config.get("ocr_tesseract_languages", "")).strip()
+        requested = configured or TESSERACT_LANG_MAP.get(lang, "eng")
+        requested_parts = [part.strip() for part in requested.split("+") if part.strip()]
+        if not requested_parts:
+            requested_parts = ["eng"]
+
+        if self._languages is None:
+            try:
+                self._languages = set(pytesseract.get_languages(config=""))
+            except Exception as e:
+                logger.warning(f"Could not list Tesseract language packs: {e}")
+                self._languages = set()
+
+        if not self._languages:
+            return "+".join(requested_parts)
+
+        usable = [part for part in requested_parts if part in self._languages]
+        if usable:
+            return "+".join(usable)
+        if "eng" in self._languages:
+            logger.warning(
+                f"Tesseract language {requested!r} is not installed; falling back to English."
+            )
+            return "eng"
+        return "+".join(requested_parts)
+
+    @classmethod
+    def _candidate_from_data(cls, data: dict, variant: str, psm: int) -> TesseractCandidate:
+        words_by_line = {}
+        confidences = []
+
+        total = len(data.get("text", []))
+        for i in range(total):
+            raw = str(data.get("text", [""])[i] or "").strip()
+            text = re.sub(r"\s+", " ", raw)
+            if not text:
+                continue
+
+            try:
+                confidence = float(data.get("conf", ["-1"])[i])
+            except Exception:
+                confidence = -1.0
+
+            if confidence >= 0:
+                confidences.append(confidence)
+
+            block = data.get("block_num", [0])[i]
+            par = data.get("par_num", [0])[i]
+            line = data.get("line_num", [0])[i]
+            words_by_line.setdefault((block, par, line), []).append(text)
+
+        lines = [" ".join(words) for _, words in sorted(words_by_line.items())]
+        normalized = cls._normalize_text("\n".join(lines))
+        avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+        word_count = sum(len(line.split()) for line in lines)
+        return TesseractCandidate(normalized, avg_conf, word_count, variant, psm)
+
+    def _best_candidate(self, pytesseract, pil_image: Image.Image, tess_lang: str) -> TesseractCandidate:
+        best = TesseractCandidate("", 0.0, 0, "none", 6)
+        min_conf = float(_config.get("ocr_tesseract_min_confidence", 45))
+
+        for variant_name, variant_image in self._variant_images(pil_image):
+            for psm in self._parse_psm_modes():
+                config = (
+                    f"--oem 1 --psm {psm} --dpi 300 "
+                    "-c preserve_interword_spaces=1 "
+                    "-c textord_heavy_nr=1"
+                )
+                data = pytesseract.image_to_data(
+                    variant_image,
+                    lang=tess_lang,
+                    config=config,
+                    output_type=pytesseract.Output.DICT,
+                )
+                candidate = self._candidate_from_data(data, variant_name, psm)
+                if candidate.score > best.score:
+                    best = candidate
+                if candidate.avg_confidence >= 82 and candidate.word_count >= 8:
+                    return candidate
+
+        if best.text and best.avg_confidence >= min_conf:
+            return best
+        return best
 
     def extract_text(self, pil_image: Image.Image, lang: str = "eng") -> str:
         if not self._check_available():
@@ -443,20 +735,22 @@ class TesseractOCREngine:
             import pytesseract
 
             t0 = time.time()
-            tess_lang = TESSERACT_LANG_MAP.get(lang, "eng")
-            processed = self._prepare_image(pil_image)
-            text = pytesseract.image_to_string(
-                processed,
-                lang=tess_lang,
-                config="--oem 3 --psm 6",
-            )
-            text = re.sub(r"\s+", " ", text).strip()
+            tess_lang = self._resolve_lang(pytesseract, lang)
+            best = self._best_candidate(pytesseract, pil_image, tess_lang)
             elapsed_ms = int((time.time() - t0) * 1000)
-            logger.info(f"Tesseract OCR done in {elapsed_ms} ms | chars={len(text)}")
+            logger.info(
+                "Tesseract OCR done in %s ms | chars=%s | confidence=%.1f | "
+                "variant=%s | psm=%s",
+                elapsed_ms,
+                len(best.text),
+                best.avg_confidence,
+                best.variant,
+                best.psm,
+            )
 
-            if not text:
+            if not best.text:
                 return "No text detected in the image."
-            return text
+            return best.text
 
         except Exception as e:
             logger.error(f"Tesseract OCR error: {e}")
@@ -479,7 +773,7 @@ class GeminiOCREngine:
 
     On any failure (no internet, bad key, timeout, package missing),
     extract_text() raises — the caller (scan_and_read) is expected to
-    catch that and fall back to the local SuryaOCREngine.
+    catch that and fall back to local OCR.
     """
 
     _instance = None
@@ -498,6 +792,10 @@ class GeminiOCREngine:
         return cls._instance
 
     def _get_client(self):
+        api_key = _config.get("gemini_api_key", "") or self._api_key
+        if api_key != self._api_key:
+            self._api_key = api_key
+            self._client = None
         if self._client is not None:
             return self._client
         if not self._api_key:
@@ -512,7 +810,6 @@ class GeminiOCREngine:
         Raises on any failure — caller must catch and fall back.
         """
         from google.genai import types  # local import, same reason as above
-        import httpx
 
         client = self._get_client()
 
@@ -611,39 +908,55 @@ def scan_and_read(lang: str = "eng") -> str:
             return False
         return True
 
-    # ── FAST PATH: Tesseract first (typically < 300 ms on Pi) ────────
-    # In auto mode, run Tesseract first. If it finds a reasonable amount
-    # of text we return immediately — no need for a slow cloud round-trip.
-    _MIN_CHARS_FOR_FAST_RETURN = 10  # below this, Gemini gets a second look
+    tess_text = ""
+    tess_ok = False
+    gemini_first = bool(_config.get("ocr_gemini_first", True))
 
-    if engine_name in ("auto", "tesseract", "gemini"):
-        tess_text = _tesseract_engine.extract_text(pil_image, lang=lang)
-        tess_ok = _is_usable(tess_text)
-
-        # Tesseract found enough text → return immediately (fast path)
-        if tess_ok and len(tess_text.strip()) >= _MIN_CHARS_FOR_FAST_RETURN:
-            return tess_text
-
-    # ── SLOW PATH: Gemini cloud OCR (typically 5–20 s) ───────────────
-    # Only reached when Tesseract returned too little text or is disabled.
-    if engine_name in ("auto", "gemini") and _config.get("gemini_api_key"):
+    def _try_gemini() -> str:
         try:
             gemini_text = _gemini_engine.extract_text(pil_image, lang=lang)
             if _is_usable(gemini_text):
                 return gemini_text
-            logger.info(f"Gemini found no text, using Tesseract result: {gemini_text!r}")
+            logger.info(f"Gemini found no usable text: {gemini_text!r}")
         except Exception as e:
-            logger.warning(f"Gemini OCR unavailable, using Tesseract result: {e}")
+            logger.warning(f"Gemini OCR unavailable, falling back locally: {e}")
+        return ""
 
-    # ── Return whatever Tesseract got (may be sparse or empty) ───────
+    def _try_tesseract() -> str:
+        nonlocal tess_text, tess_ok
+        tess_text = _tesseract_engine.extract_text(pil_image, lang=lang)
+        tess_ok = _is_usable(tess_text)
+        return tess_text
+
+    # ── HIGHEST-ACCURACY PATH: Gemini vision OCR first when configured ──
+    # The Pi keeps working without internet/API access because every Gemini
+    # failure falls back to the local Tesseract pipeline below.
+    if engine_name in ("auto", "gemini") and _config.get("gemini_api_key") and gemini_first:
+        gemini_text = _try_gemini()
+        if gemini_text:
+            return gemini_text
+
+    # ── LOCAL PATH: improved multi-pass Tesseract fallback ─────────────
+    if engine_name in ("auto", "tesseract", "gemini"):
+        _try_tesseract()
+        if engine_name == "tesseract" and tess_ok:
+            return tess_text
+        if engine_name == "auto" and tess_ok and not _config.get("gemini_api_key"):
+            return tess_text
+
+    # Optional cloud second look for users who prefer fast local-first scans.
+    if engine_name in ("auto", "gemini") and _config.get("gemini_api_key") and not gemini_first:
+        gemini_text = _try_gemini()
+        if gemini_text:
+            return gemini_text
+
     if engine_name in ("auto", "tesseract", "gemini"):
         if tess_ok:
             return tess_text
-        # Tesseract also failed — optionally try Surya as last resort
         if _config.get("ocr_surya_fallback", False):
             logger.warning(f"Tesseract OCR did not produce usable text, trying Surya: {tess_text}")
             return _engine.extract_text(pil_image, lang=lang)
-        return tess_text  # return whatever we got, even if sparse
+        return tess_text
 
     return _engine.extract_text(pil_image, lang=lang)
 

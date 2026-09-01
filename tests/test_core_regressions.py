@@ -229,6 +229,66 @@ class CoreRegressionTests(unittest.TestCase):
             ocr._config.clear()
             ocr._config.update(original_config)
 
+    def test_ocr_auto_uses_gemini_first_when_configured(self):
+        import numpy as np
+        from modules import ocr
+
+        original_config = dict(ocr._config)
+        try:
+            ocr._config.update({
+                "ocr_engine": "auto",
+                "gemini_api_key": "configured",
+                "ocr_gemini_first": True,
+                "ocr_surya_fallback": False,
+            })
+
+            with mock.patch.object(ocr._camera, "open", return_value=True):
+                with mock.patch.object(
+                    ocr._camera,
+                    "capture",
+                    return_value=np.zeros((20, 20, 3), dtype=np.uint8),
+                ):
+                    with mock.patch.object(
+                        ocr._gemini_engine,
+                        "extract_text",
+                        return_value="high accuracy cloud text",
+                    ):
+                        with mock.patch.object(ocr._tesseract_engine, "extract_text") as tess:
+                            with mock.patch.object(ocr._engine, "extract_text") as surya:
+                                self.assertEqual(
+                                    ocr.scan_and_read(),
+                                    "high accuracy cloud text",
+                                )
+                                tess.assert_not_called()
+                                surya.assert_not_called()
+        finally:
+            ocr._config.clear()
+            ocr._config.update(original_config)
+
+    def test_tesseract_candidate_keeps_best_confidence_text(self):
+        from modules import ocr
+
+        weak = {
+            "text": ["", "H3llo", "w0rld"],
+            "conf": ["-1", "20", "22"],
+            "block_num": [0, 1, 1],
+            "par_num": [0, 1, 1],
+            "line_num": [0, 1, 1],
+        }
+        strong = {
+            "text": ["", "Hello", "world"],
+            "conf": ["-1", "91", "89"],
+            "block_num": [0, 1, 1],
+            "par_num": [0, 1, 1],
+            "line_num": [0, 1, 1],
+        }
+
+        weak_candidate = ocr.TesseractOCREngine._candidate_from_data(weak, "full-adaptive", 6)
+        strong_candidate = ocr.TesseractOCREngine._candidate_from_data(strong, "full-enhanced", 4)
+
+        self.assertGreater(strong_candidate.score, weak_candidate.score)
+        self.assertEqual(strong_candidate.text, "Hello world")
+
     def test_ocr_does_not_use_surya_after_empty_tesseract_by_default(self):
         import numpy as np
         from modules import ocr

@@ -3533,3 +3533,44 @@ HARRY POTER..."
 2026-08-15 15:27:13,903 [INFO] Shutting down...
 2026-08-15 15:27:13,903 [INFO] Shutdown complete.
 2026-08-15 15:27:14,849 [INFO] TTS Manager ready.
+2026-08-20 19:09:22,585 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-08-20 19:09:22,586 [INFO] Module loaded: tts
+2026-08-20 19:09:22,803 [INFO] Vosk installed but no model found. Download vosk-model-small-en-in-0.4 from https://alphacephei.com/vosk/models and extract it to /Users/daxpatel/Desktop/Reseach/blindterminalv1/models_local/vosk/
+2026-08-20 19:09:22,836 [INFO] STT engines active: google -> sphinx
+2026-08-20 19:09:22,837 [INFO] Recordings will be saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/blindassist-recordings
+2026-08-20 19:09:22,841 [INFO] Module loaded: voice
+2026-08-20 19:09:22,845 [INFO] Module loaded: ai_query
+2026-08-20 19:09:22,845 [INFO] Morse decoder started with auto-timing.
+2026-08-20 19:09:22,845 [INFO] Module loaded: morse
+2026-08-20 19:09:22,850 [INFO] Module loaded: ocr
+2026-08-20 19:09:22,850 [INFO] Module loaded: translator
+2026-08-20 19:09:22,850 [INFO] Module loaded: gesture_control
+2026-08-20 19:09:22,851 [INFO] Module loaded: emotion_engine
+2026-08-20 19:09:22,851 [INFO] Module loaded: gps_navigator
+2026-08-20 19:09:22,858 [INFO] Module loaded: confidential_mode
+2026-08-20 19:09:22,861 [WARNING] No YOLO weights found locally; ultralytics will try to download yolov8n.pt.
+2026-08-20 19:09:22,861 [INFO] Module loaded: object_detection
+2026-08-20 19:09:22,861 [WARNING] Pico W Morse buttons unavailable, using keyboard fallback: [Errno 2] could not open port /dev/ttyACM0: [Errno 2] No such file or directory: '/dev/ttyACM0'
+2026-08-20 19:09:22,862 [INFO] Mode 2: Morse Type
+2026-08-20 19:09:22,863 [WARNING] Gemini OCR unavailable, falling back to local OCR: network down
+2026-08-20 19:09:22,868 [INFO] Loading faiss.
+2026-08-20 19:09:23,046 [INFO] Successfully loaded faiss.
+2026-08-20 19:09:23,494 [ERROR] Unsupported file type for indexing: .bin
+2026-08-20 19:09:23,497 [INFO] Translating from English to Hindi: "hello..."
+2026-08-20 19:09:23,498 [INFO] Translation result: "नमस्ते..."
+2026-08-20 19:09:23,499 [INFO] Vector store saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/tmpmmspgzrt
+2026-08-20 19:09:23,499 [WARNING] Embedding dimension changed from 3 to 4. Dropping incompatible local vectors; re-index documents for best RAG results.
+2026-08-20 19:09:23,499 [INFO] Vector store saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/tmpmmspgzrt
+2026-08-20 19:09:23,499 [WARNING] Query embedding dimension 3 does not match vector store dimension 4. Re-index documents with the current embedding model.
+2026-08-20 19:09:23,500 [WARNING] Ignoring legacy metadata.pkl because pickle can execute code. Set BLINDASSIST_TRUST_LEGACY_PICKLE=1 once to migrate a trusted local store.
+2026-08-20 19:09:23,811 [INFO] Morse decoder started with auto-timing.
+2026-08-20 19:09:25,326 [INFO] Decoded: .- -> A
+2026-08-20 19:09:26,829 [INFO] Word complete: A
+2026-08-20 19:09:26,885 [INFO] Streaming detection active (display=False)
+2026-08-20 19:09:26,885 [INFO] Object detection stopped by callback.
+2026-08-20 19:09:26,905 [INFO] Described diagram: fig1.png
+2026-08-20 19:09:26,906 [INFO] Skipping remote image reference: https://evil.example/x.png
+2026-08-20 19:09:26,906 [WARNING] Skipping image outside document directory: ../../../etc/passwd
+2026-08-20 19:09:26,906 [INFO] Shutting down...
+2026-08-20 19:09:26,907 [INFO] Shutdown complete.
+2026-08-20 19:09:27,724 [INFO] TTS Manager ready.
