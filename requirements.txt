@@ -100,9 +100,27 @@ logfire>=2.0.0
 #   pip install scikit-learn>=1.5.0      # emotion engine
 #   pip install llama-cpp-python>=0.2.90 # offline LLM fallback
 #   pip install surya-ocr                # high-accuracy OCR (slow on a Pi)
+#   pip install argostranslate           # Mode 4 offline translation, see below
 #
 # System packages (not pip):
 #   Tesseract OCR — macOS: brew install tesseract
 #                   Pi:    sudo apt install tesseract-ocr
 #   Audio player  — Pi:    sudo apt install alsa-utils mpg123
 #                          (tts.py's fallback player; macOS uses built-in afplay)
+#   espeak-ng     — Pi:    sudo apt install espeak-ng
+#                          Ships the Hindi and Gujarati voices. Without it a
+#                          translation can be produced offline but not spoken.
+#
+# ── Offline translation (Mode 4 without internet) ───────────
+# The translator falls back through cache → Argos → phrasebook when the
+# network is down. The phrasebook is built in and covers common classroom
+# words only; for full sentences install Argos and its language pairs:
+#
+#   pip install argostranslate
+#   python3 -c "import argostranslate.package as p; p.update_package_index(); \
+#       [p.install_from_path(q.download()) for q in p.get_available_packages() \
+#        if (q.from_code, q.to_code) in (('en','hi'), ('hi','en'))]"
+#
+# Argos has no Gujarati pair at present. For offline Gujarati, run a
+# LibreTranslate server on the Pi or the classroom LAN and point
+# settings.json's "libretranslate_url" at it.

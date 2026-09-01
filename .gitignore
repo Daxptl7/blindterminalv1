@@ -17,6 +17,9 @@ __pycache__/
 .venv/
 venv/
 
+# Translation cache (rebuilt at runtime; device-local)
+cache/
+
 # Log files
 logs/
 *.log

@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -277,7 +278,16 @@ def _decode_mp3_to_wav(data: bytes) -> bytes:
     return b""
 
 
-def _espeak_to_wav(text: str, rate: int) -> bytes:
+# espeak-ng ships real Hindi and Gujarati voices. They are the only offline
+# way to say a translation out loud, so the language has to reach this far
+# down: the default English voice renders Devanagari and Gujarati script as
+# silence or as spelled-out nonsense.
+_ESPEAK_VOICES = {"eng": "en", "en": "en",
+                  "hin": "hi", "hi": "hi",
+                  "guj": "gu", "gu": "gu"}
+
+
+def _espeak_to_wav(text: str, rate: int, lang: str = "eng") -> bytes:
     """espeak → WAV bytes, or b"". The floor of the routed-playback chain.
 
     pyttsx3 can be installed but unconfigured (no driver, no voice), so it is
@@ -295,7 +305,9 @@ def _espeak_to_wav(text: str, rate: int) -> bytes:
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_path = tmp.name
-        subprocess.run([espeak, "-s", str(int(rate)), "-a", "175", "-g", "4",
+        voice = _ESPEAK_VOICES.get(str(lang).lower(), "en")
+        subprocess.run([espeak, "-v", voice,
+                        "-s", str(int(rate)), "-a", "175", "-g", "4",
                         "-w", tmp_path, text], timeout=60,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.getsize(tmp_path) > 44:
@@ -412,6 +424,31 @@ class _Utterance:
         self.done = threading.Event()
 
 
+def _pick_pyttsx3_voice(engine, lang: str):
+    """Voice id on `engine` that can speak `lang`, or None.
+
+    pyttsx3 exposes no language API, only a list of driver-specific voices, so
+    this matches on the language tags and then on the id/name text. Returns
+    None for English, where the default voice is already correct.
+    """
+    want = _ESPEAK_VOICES.get(str(lang).lower(), "en")
+    if want == "en":
+        return None
+    try:
+        for voice in engine.getProperty("voices"):
+            tags = [str(t).lower() for t in (getattr(voice, "languages", None) or [])]
+            if any(want in t for t in tags):
+                return voice.id
+            ident = f"{getattr(voice, 'id', '')} {getattr(voice, 'name', '')}".lower()
+            # Match a whole tag, so "gu" never matches "gujarati"'s neighbours
+            # like "guarani" — or, worse, the "gu" inside some unrelated path.
+            if any(part == want for part in re.split(r"[^a-z]+", ident)):
+                return voice.id
+    except Exception as e:
+        logger.debug(f"Could not enumerate pyttsx3 voices: {e}")
+    return None
+
+
 class TTSManager:
     def __init__(self):
         self.settings = self._load_settings()
@@ -473,12 +510,53 @@ class TTSManager:
                 self._gtts_failed_at = time.time()
                 logger.warning(f"gTTS unavailable ({e}); using offline engine for 30s.")
 
-        data = self._synthesize_offline_wav(text)
+        data = self._synthesize_offline_wav(text, lang)
         return (data, "wav") if data else (b"", None)
 
-    def _synthesize_offline_wav(self, text: str) -> bytes:
+    def _select_voice(self, lang: str):
+        """Switch the shared engine to `lang`. Returns (chosen, previous).
+
+        Call under _engine_lock. The previous voice is read here rather than
+        cached at init because some drivers report it as "" (a real value
+        meaning "the default"), and a cached falsy id made the restore below
+        silently do nothing — leaving every later English prompt in a Hindi
+        voice.
+        """
+        prev_voice = None
+        voice_id = _pick_pyttsx3_voice(self._engine, lang)
+        if voice_id:
+            try:
+                prev_voice = self._engine.getProperty("voice")
+            except Exception:
+                prev_voice = None
+            try:
+                self._engine.setProperty("voice", voice_id)
+            except Exception as e:
+                logger.debug(f"Could not select {lang} voice: {e}")
+                return None, None
+        return voice_id, prev_voice
+
+    def _restore_voice(self, voice_id, prev_voice) -> None:
+        """Put the shared engine back, so the next utterance is unaffected."""
+        if voice_id and prev_voice is not None:
+            try:
+                self._engine.setProperty("voice", prev_voice)
+            except Exception as e:
+                logger.debug(f"Could not restore default voice: {e}")
+
+    def _synthesize_offline_wav(self, text: str, lang: str = "eng") -> bytes:
         """pyttsx3 → WAV bytes, or b"". Split out so routed playback can fall
         back to a format `aplay -D` can definitely handle."""
+        # For Hindi and Gujarati, go to espeak-ng first. pyttsx3's default
+        # voice is whatever the driver picked at init — English on every image
+        # this runs on — and handing it Devanagari produces silence. espeak-ng
+        # has the actual voices, so an offline device can still speak a
+        # translation instead of just displaying one.
+        if _ESPEAK_VOICES.get(str(lang).lower(), "en") != "en":
+            data = _espeak_to_wav(text, self._current_rate, lang)
+            if data:
+                return data
+
         if not self._engine_available:
             return b""
 
@@ -488,8 +566,12 @@ class TTSManager:
                 tmp_path = tmp.name
             with self._engine_lock:
                 self._engine.setProperty("rate", self._current_rate)
-                self._engine.save_to_file(text, tmp_path)
-                self._engine.runAndWait()
+                voice_id, prev_voice = self._select_voice(lang)
+                try:
+                    self._engine.save_to_file(text, tmp_path)
+                    self._engine.runAndWait()
+                finally:
+                    self._restore_voice(voice_id, prev_voice)
             with open(tmp_path, "rb") as f:
                 data = f.read()
             return data
@@ -619,15 +701,19 @@ class TTSManager:
                 except Exception:
                     pass
 
-    def _play_pyttsx3_direct(self, text: str) -> bool:
+    def _play_pyttsx3_direct(self, text: str, lang: str = "eng") -> bool:
         """Last audible resort: speak straight out of pyttsx3, no file involved."""
         if not self._engine_available:
             return False
         try:
             with self._engine_lock:
                 self._engine.setProperty("rate", self._current_rate)
-                self._engine.say(text)
-                self._engine.runAndWait()
+                voice_id, prev_voice = self._select_voice(lang)
+                try:
+                    self._engine.say(text)
+                    self._engine.runAndWait()
+                finally:
+                    self._restore_voice(voice_id, prev_voice)
             return True
         except Exception as e:
             logger.error(f"Direct pyttsx3 playback failed: {e}")
@@ -660,8 +746,8 @@ class TTSManager:
                     if fmt == "mp3":
                         # Lazily: espeak must not run when pyttsx3 already
                         # produced usable audio — the user is waiting on this.
-                        for synth in (lambda: self._synthesize_offline_wav(text),
-                                      lambda: _espeak_to_wav(text, self._current_rate)):
+                        for synth in (lambda: self._synthesize_offline_wav(text, lang),
+                                      lambda: _espeak_to_wav(text, self._current_rate, lang)):
                             wav = synth()
                             if wav and self._play_routed(wav, "wav", device):
                                 logger.warning(
@@ -687,7 +773,7 @@ class TTSManager:
                     return
                 logger.warning("All file-based playback failed; using direct engine.")
 
-            if self._play_pyttsx3_direct(text):
+            if self._play_pyttsx3_direct(text, lang):
                 logger.debug("Played via pyttsx3 direct.")
                 return
 

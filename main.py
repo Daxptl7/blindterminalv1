@@ -133,10 +133,16 @@ if _morse_serial_singleton is not None and _modules.get("voice") is not None:
 def _has(mod_name):
     return _modules.get(mod_name) is not None
 
-def _speak(text, block=False):
-    """Safe TTS — works even if tts module failed to load."""
+def _speak(text, block=False, lang="eng"):
+    """Safe TTS — works even if tts module failed to load.
+
+    `lang` picks the voice. It matters for exactly one thing today — reading a
+    translation aloud — but it has to be threaded through here, because the
+    default English voice reads Devanagari and Gujarati script as either
+    silence or nonsense.
+    """
     if _has("tts"):
-        _modules["tts"].speak(text, block=block)
+        _modules["tts"].speak(text, lang=lang, block=block)
     else:
         print(f"[TTS OFFLINE] {text}")
 
@@ -870,19 +876,46 @@ def mode_translate():
 
     # ── STEP 4: Translate and speak ───────────────────────────────────────
     _speak(f"Translating. {label}.")
+    translator = _modules["translator"]
     try:
-        result = _modules["translator"].translate(text, from_lang=src, to_lang=dest)
+        result = translator.translate_ex(text, from_lang=src, to_lang=dest)
     except Exception as e:
         logger.error(f"Translation error: {e}")
         _speak("Translation failed. Please try again.")
         return
 
-    if not result:
+    if not result.text:
         _speak("Translation returned an empty result.")
         return
 
-    _speak(f"Translation: {result}")
-    logger.info(f"Translated [{src}→{dest}]: {text[:80]} → {result[:80]}")
+    # The old code spoke whatever string came back — including the literal
+    # words "Translation failed. Original text: ..." — through the English
+    # voice. Two things were wrong with that: a failure was announced as
+    # though it were a result, and a real Hindi or Gujarati result was read
+    # in an English accent. translate_ex() reports both facts, so say the
+    # right thing and use the right voice.
+    tts_lang = translator.LANG_TO_TTS.get(result.lang, "eng")
+
+    if result.translated:
+        _speak("Translation.", block=True)
+        _speak(result.text, lang=tts_lang, block=True)
+        print(f"\n  {label}: {result.text}\n")
+        logger.info(
+            f"Translated [{src}→{dest}] via {result.source}: "
+            f"{text[:80]} → {result.text[:80]}")
+    else:
+        # Nothing was translated. Say why, then read back what the user gave
+        # us so the session still ends with something useful rather than a
+        # dead end.
+        if not translator.is_online():
+            _speak("I could not translate that because there is no internet "
+                   "connection. Here is your original text.", block=True)
+        else:
+            _speak("The translation service did not respond. "
+                   "Here is your original text.", block=True)
+        _speak(result.text, lang=translator.LANG_TO_TTS.get(src, "eng"), block=True)
+        print(f"\n  [not translated — {result.error}]  {result.text}\n")
+        logger.warning(f"Translation unavailable [{src}→{dest}]: {result.error}")
 
 
 # A gesture never launches a mode on its own, and it is never confirmed with a

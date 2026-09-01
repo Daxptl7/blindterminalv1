@@ -145,11 +145,54 @@ class CoreRegressionTests(unittest.TestCase):
         response.json.return_value = [[["नमस्ते", "hello", None, None]], None, "en"]
         response.raise_for_status.return_value = None
 
-        with mock.patch.object(translator.requests, "get", return_value=response) as get:
+        # translate() now short-circuits on the cache and skips every network
+        # provider when the device is offline, so both have to be neutralised
+        # or this asserts nothing about the Google path.
+        with mock.patch.object(translator, "is_online", return_value=True), \
+                mock.patch.object(translator, "_cache_get", return_value=None), \
+                mock.patch.object(translator, "_cache_put"), \
+                mock.patch.object(translator.requests, "get", return_value=response) as get:
             result = translator.translate("hello", "en", "hi")
 
         self.assertEqual(result, "नमस्ते")
         get.assert_called_once()
+
+    def test_translate_falls_back_offline_instead_of_stalling(self):
+        """No network must mean a fast, honest answer — not a 30s DNS stall."""
+        from modules import translator
+
+        def unreachable(*_a, **_k):
+            raise AssertionError("network provider called while offline")
+
+        with mock.patch.object(translator, "is_online", return_value=False), \
+                mock.patch.object(translator, "_cache_get", return_value=None), \
+                mock.patch.object(translator.requests, "get", unreachable), \
+                mock.patch.object(translator.requests, "post", unreachable):
+            hit = translator.translate_ex("thank you", "en", "gu")
+            miss = translator.translate_ex("an unlisted sentence", "en", "gu")
+
+        # Phrasebook entry: still translated, offline.
+        self.assertTrue(hit.translated)
+        self.assertEqual(hit.source, "phrasebook")
+        self.assertEqual(hit.lang, "gu")
+
+        # No entry: reports failure rather than returning an error string as
+        # though it were a translation, and tags the text as still-English so
+        # the caller speaks it with the English voice.
+        self.assertFalse(miss.translated)
+        self.assertEqual(miss.text, "an unlisted sentence")
+        self.assertEqual(miss.lang, "en")
+
+    def test_detect_language_works_without_network(self):
+        from modules import translator
+
+        def unreachable(*_a, **_k):
+            raise AssertionError("network used for script detection")
+
+        with mock.patch.object(translator.requests, "get", unreachable):
+            self.assertEqual(translator.detect_language("hello there"), "en")
+            self.assertEqual(translator.detect_language("प्रकाश संश्लेषण"), "hi")
+            self.assertEqual(translator.detect_language("પ્રકાશસંશ્લેષણ"), "gu")
 
     def test_ocr_auto_falls_back_to_tesseract_not_surya(self):
         import numpy as np

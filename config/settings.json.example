@@ -68,5 +68,12 @@
 
   "privacy": {
     "confidential_prompt_timeout_seconds": 8
-  }
+  },
+
+  "libretranslate_url": "",
+  "libretranslate_api_key": "",
+  "translate_timeout_s": 6.0,
+  "translate_online_budget_s": 14.0,
+  "translate_offline_backoff_s": 30.0,
+  "translate_cache_entries": 2000
 }
