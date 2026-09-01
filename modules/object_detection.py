@@ -7,6 +7,7 @@ Processes frames asynchronously. No blocking per-frame.
 
 import json
 import cv2
+import os
 import signal
 import sys
 import logging
@@ -35,9 +36,129 @@ CONFIDENCE = float(_settings.get("yolo_confidence", 0.75))
 INFER_SIZE = int(_settings.get("yolo_imgsz", 640))
 # Configurable so it can be pointed away from the OCR camera on the Pi, the
 # same way gesture_camera_index already is.
-CAMERA_INDEX = int(_settings.get("object_detection_camera_index", 0))
+try:
+    CAMERA_INDEX = int(_settings.get("object_detection_camera_index", 0))
+except Exception:
+    CAMERA_INDEX = None
 
 DISPLAY_WINDOW = bool(_settings.get("object_detection_display", False))
+
+
+# Raspberry Pi exposes ISP/codecs/metadata as /dev/video* nodes. Some open
+# successfully but never produce frames, so object detection must probe actual
+# images instead of trusting the configured number.
+_NON_CAMERA_NODE_HINTS = ("unicam", "bcm2835-isp", "rpivid", "pispbe",
+                          "codec", "hevc", "isp", "stat", "meta")
+
+
+def _v4l2_nodes() -> list:
+    nodes = []
+    base = "/sys/class/video4linux"
+    if not os.path.isdir(base):
+        return nodes
+
+    for entry in sorted(os.listdir(base)):
+        if not entry.startswith("video"):
+            continue
+        try:
+            index = int(entry[len("video"):])
+        except ValueError:
+            continue
+
+        name = ""
+        try:
+            with open(os.path.join(base, entry, "name")) as f:
+                name = f.read().strip().lower()
+        except OSError:
+            pass
+        if any(hint in name for hint in _NON_CAMERA_NODE_HINTS):
+            continue
+
+        try:
+            bus = os.path.realpath(os.path.join(base, entry, "device")).lower()
+        except OSError:
+            bus = ""
+        nodes.append(("usb" in bus, index, name))
+
+    nodes.sort(key=lambda item: (not item[0], item[1]))
+    return nodes
+
+
+def _video_capture(source):
+    if hasattr(cv2, "CAP_V4L2") and sys.platform.startswith("linux") and isinstance(source, int):
+        return cv2.VideoCapture(source, cv2.CAP_V4L2)
+    return cv2.VideoCapture(source)
+
+
+def _probe_camera(source):
+    cap = _video_capture(source)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    for _ in range(6):
+        ok, frame = cap.read()
+        if ok and frame is not None and getattr(frame, "size", 0):
+            return cap
+    cap.release()
+    return None
+
+
+def _open_camera(source):
+    if source is not None and not isinstance(source, int):
+        cap = _probe_camera(source)
+        if cap is None:
+            logger.error(f"Object detection camera failed to open (source={source}).")
+        return cap
+
+    nodes = _v4l2_nodes()
+    usb_indices = [index for is_usb, index, _ in nodes if is_usb]
+    other_indices = [index for is_usb, index, _ in nodes if not is_usb]
+
+    if nodes:
+        logger.info("Object detection video nodes: " + ", ".join(
+            f"video{index}{'(usb)' if is_usb else ''}"
+            f"{' ' + name if name else ''}" for is_usb, index, name in nodes))
+
+    order = []
+    if source is not None and source >= 0:
+        order.append(source)
+    order += [index for index in usb_indices if index not in order]
+    order += [index for index in other_indices if index not in order]
+    if not nodes:
+        order += [index for index in range(0, 11) if index not in order]
+
+    previous_level = None
+    try:
+        previous_level = cv2.utils.logging.getLogLevel()
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
+    except Exception:
+        previous_level = None
+
+    try:
+        for index in order:
+            cap = _probe_camera(index)
+            if cap is None:
+                continue
+            if index != source:
+                logger.warning(
+                    f"object_detection_camera_index={source} is not a working "
+                    f"camera; using index {index}. Set object_detection_camera_index "
+                    f"to {index} in settings.json to skip this search.")
+            else:
+                logger.info(f"Object detection camera ready on index {index}.")
+            return cap
+    finally:
+        if previous_level is not None:
+            try:
+                cv2.utils.logging.setLogLevel(previous_level)
+            except Exception:
+                pass
+
+    logger.error("No working camera found for object detection.")
+    return None
 
 
 # ── MODEL PATH RESOLUTION ──────────────────────────────────
@@ -113,7 +234,7 @@ def preprocess(frame: np.ndarray) -> np.ndarray:
 
 
 # ── STREAMING INFERENCE ─────────────────────────────────────
-def stream_detect(source=0, callback=None, max_frames=None, stop_event=None):
+def stream_detect(source=None, callback=None, max_frames=None, stop_event=None):
     """
     Streaming object detection.
     Reads frames from capture and runs YOLOv8 inference.
@@ -126,15 +247,11 @@ def stream_detect(source=0, callback=None, max_frames=None, stop_event=None):
     """
     model = _get_model()
 
-    # CAP_V4L2 is a Linux-only backend; requesting it on macOS/Windows makes
-    # VideoCapture fail to open at all, so only ask for it where it exists.
-    if hasattr(cv2, "CAP_V4L2") and sys.platform.startswith("linux"):
-        cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
-    else:
-        cap = cv2.VideoCapture(source)
+    if source is None:
+        source = CAMERA_INDEX
 
-    if not cap.isOpened():
-        cap.release()
+    cap = _open_camera(source)
+    if cap is None:
         logger.error(f"Object detection camera failed to open (source={source}).")
         raise RuntimeError("Camera not available for object detection.")
 

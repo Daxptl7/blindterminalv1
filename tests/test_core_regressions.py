@@ -564,6 +564,77 @@ class RepairedDefectTests(unittest.TestCase):
             )
         self.assertEqual(len(calls), 1, "loop must exit on the first False from the callback")
 
+    def test_object_detection_falls_back_from_bad_configured_camera(self):
+        import numpy as np
+        from modules import object_detection
+
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+
+        def fake_cap(opened):
+            cap = mock.Mock()
+            cap.isOpened.return_value = opened
+            cap.read.return_value = (opened, frame if opened else None)
+            return cap
+
+        bad = fake_cap(False)
+        good = fake_cap(True)
+
+        result = mock.Mock()
+        result.boxes = []
+        model = mock.Mock()
+        model.predict.return_value = [result]
+        model.names = {}
+
+        def video_capture(source, *args):
+            return bad if source == 8 else good
+
+        calls = []
+        with mock.patch.object(object_detection, "_get_model", return_value=model), \
+             mock.patch.object(object_detection, "_v4l2_nodes", return_value=[
+                 (False, 8, "missing camera"),
+                 (True, 1, "usb camera"),
+             ]), \
+             mock.patch.object(object_detection.cv2, "VideoCapture", side_effect=video_capture):
+            object_detection.stream_detect(
+                source=8,
+                callback=lambda text, dets: calls.append(text) and False or False,
+            )
+
+        self.assertEqual(len(calls), 1)
+        good.release.assert_called_once()
+
+    def test_translate_voice_uses_selected_source_language_for_recording(self):
+        from types import SimpleNamespace
+
+        main = importlib.import_module("main")
+
+        translator = mock.Mock()
+        translator.LANG_TO_TTS = {"en": "eng", "hi": "hin", "gu": "guj"}
+        translator.translate_ex.return_value = SimpleNamespace(
+            text="hello",
+            lang="en",
+            translated=True,
+            source="mock",
+            error=None,
+        )
+
+        listened = []
+        with mock.patch.dict(main._modules, {
+            "translator": translator,
+            "voice": mock.Mock(),
+        }), \
+             mock.patch.object(main, "_select_with_buttons", side_effect=["3", "3"]), \
+             mock.patch.object(
+                 main,
+                 "_listen_until_stopped",
+                 side_effect=lambda lang, prompt=None: listened.append(lang) or "नमस्ते",
+             ), \
+             mock.patch.object(main, "_speak"):
+            main.mode_translate()
+
+        self.assertEqual(listened, ["hi-IN"])
+        translator.translate_ex.assert_called_once_with("नमस्ते", from_lang="hi", to_lang="en")
+
     # ── ai_query: timeouts that did not time out ─────────────────────────
     def test_ask_ai_does_not_create_a_pool_per_call(self):
         from modules import ai_query

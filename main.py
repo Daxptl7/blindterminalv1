@@ -271,6 +271,12 @@ def _listen_until_stopped(lang: str = "en-IN", prompt: str | None = None):
     if not _has("voice"):
         return None
 
+    if _morse_serial_singleton is not None:
+        try:
+            _drain_button_messages()
+        except Exception as e:
+            logger.debug(f"Could not clear stale button presses before recording: {e}")
+
     stop_check, cancel = _button3_stop_signal()
 
     if prompt:
@@ -749,8 +755,43 @@ def mode_translate():
         _speak("No button was pressed. Translation cancelled.")
         return
 
+    pairs = {
+        "1": ("en", "hi"),
+        "2": ("en", "gu"),
+        "3": ("hi", "en"),
+        "22": ("gu", "en"),
+    }
+    direction_labels = {
+        "1": "English to Hindi",
+        "2": "English to Gujarati",
+        "3": "Hindi to English",
+        "22": "Gujarati to English",
+    }
+    speech_langs = {
+        "en": "en-IN",
+        "hi": "hi-IN",
+        "gu": "gu-IN",
+    }
+
+    def _choose_translation_direction() -> str | None:
+        print("\n  Button 1        → English  → Hindi")
+        print("  Button 2        → English  → Gujarati")
+        print("  Button 3        → Hindi    → English")
+        print("  Button 2 twice  → Gujarati → English")
+
+        return _select_with_buttons(
+            ("1", "2", "3"),
+            "Which translation do you want? "
+            "Press button 1 for English to Hindi. "
+            "Press button 2 for English to Gujarati. "
+            "Press button 3 for Hindi to English. "
+            "Press button 2 twice for Gujarati to English.",
+            double="2"
+        )
+
     # ── STEP 2: Get the source text ───────────────────────────────────────
     text = None
+    direction_choice = None
 
     if input_choice == "1":
         # ── Type text on keyboard ──
@@ -826,7 +867,19 @@ def mode_translate():
         if not _has("voice"):
             _speak("Voice module is not available. Please use option 1 instead.")
             return
-        text = _listen_until_stopped("en-IN", prompt="Speak your text now.")
+
+        # Voice recognition needs the source language before recording starts.
+        # The old order captured every translation voice input as English, so
+        # Hindi/Gujarati speech could be recorded cleanly and still transcribe
+        # as nonsense.
+        direction_choice = _choose_translation_direction()
+        if direction_choice not in pairs:
+            _speak("No valid direction selected. Translation cancelled.")
+            return
+
+        src, _dest = pairs[direction_choice]
+        listen_lang = speech_langs.get(src, "en-IN")
+        text = _listen_until_stopped(listen_lang, prompt="Speak your text now.")
         if not text:
             _speak_voice_failure("I did not catch anything. Please try again.")
             return
@@ -839,33 +892,8 @@ def mode_translate():
 
     # ── STEP 3: Choose translation direction ──────────────────────────────
     # Four directions, three buttons: the fourth is a double press of Button 2.
-    print("\n  Button 1        → English  → Hindi")
-    print("  Button 2        → English  → Gujarati")
-    print("  Button 3        → Hindi    → English")
-    print("  Button 2 twice  → Gujarati → English")
-
-    direction_choice = _select_with_buttons(
-        ("1", "2", "3"),
-        "Which translation do you want? "
-        "Press button 1 for English to Hindi. "
-        "Press button 2 for English to Gujarati. "
-        "Press button 3 for Hindi to English. "
-        "Press button 2 twice for Gujarati to English.",
-        double="2"
-    )
-
-    pairs = {
-        "1": ("en", "hi"),
-        "2": ("en", "gu"),
-        "3": ("hi", "en"),
-        "22": ("gu", "en"),
-    }
-    direction_labels = {
-        "1": "English to Hindi",
-        "2": "English to Gujarati",
-        "3": "Hindi to English",
-        "22": "Gujarati to English",
-    }
+    if direction_choice is None:
+        direction_choice = _choose_translation_direction()
 
     if direction_choice not in pairs:
         _speak("No valid direction selected. Translation cancelled.")

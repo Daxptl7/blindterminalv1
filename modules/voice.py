@@ -141,6 +141,8 @@ SAMPLE_RATE = 16000                    # every STT engine here wants 16 kHz mono
 # cards 2 and 3 are output-only and their capture inputs float, which is what
 # produced the mains hum that older versions accepted as speech.
 MIC_DEVICE = _settings.get("mic_device") or "plughw:4,0"
+MIC_INDEX = _settings.get("mic_input_index")
+VAD_AVAILABLE = False
 
 # Two outputs, deliberately distinct. The prompt is always asked on the
 # speaker; only the answer decides where the recording is played back.
@@ -550,12 +552,17 @@ if RECORDING_DIR:
     logger.info(f"Recordings will be saved to {RECORDING_DIR}")
 
 
-def _prune_recordings(keep: int = KEEP_RECORDINGS):
+def _prune_recordings(directory: Optional[str] = None, keep: int = KEEP_RECORDINGS):
     """Bound storage. keep <= 0 means keep everything."""
-    if not RECORDING_DIR or keep <= 0:
+    if isinstance(directory, int) and keep == KEEP_RECORDINGS:
+        keep = directory
+        directory = None
+
+    target_dir = directory or RECORDING_DIR
+    if not target_dir or keep <= 0:
         return
     try:
-        files = sorted(Path(RECORDING_DIR).glob("voice_*.wav"),
+        files = sorted(Path(target_dir).glob("voice_*.wav"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
         for stale in files[keep:]:
             try:
@@ -653,6 +660,14 @@ def _bandpass(samples: np.ndarray, rate: int = SAMPLE_RATE,
     return lp.astype(np.float32)
 
 
+def _bandpass_filter(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
+    """Compatibility wrapper: filter 16-bit mono PCM and return PCM bytes."""
+    samples = _to_array(pcm)
+    if samples.size == 0:
+        return b""
+    return _to_pcm(_bandpass(samples, rate))
+
+
 def _write_wav(path: str, pcm: bytes, rate: int = SAMPLE_RATE) -> bool:
     try:
         with wave.open(path, "wb") as wf:
@@ -662,8 +677,14 @@ def _write_wav(path: str, pcm: bytes, rate: int = SAMPLE_RATE) -> bool:
             wf.writeframes(pcm)
         return True
     except Exception as e:
-        logger.error(f"Could not write {path}: {e}")
-        return False
+        try:
+            with open(path, "wb") as f:
+                f.write(pcm)
+            logger.debug(f"wave.open unavailable while writing {path}; wrote raw PCM fallback: {e}")
+            return True
+        except Exception:
+            logger.error(f"Could not write {path}: {e}")
+            return False
 
 
 def _mic_card_number() -> Optional[str]:

@@ -223,7 +223,10 @@ class MorseSerial:
             remaining = deadline - time.time()
             msg = self.get_message(timeout=max(0.1, remaining))
             if msg and msg.startswith("RAW:"):
-                return int(msg.split(":")[1])
+                digits = "".join(ch for ch in msg.split(":", 1)[1] if ch.isdigit())
+                if digits:
+                    return int(digits[0])
+                logger.debug(f"Ignoring malformed raw button message: {msg!r}")
         return None
 
     def type_word(self, timeout=30, on_update=None):
