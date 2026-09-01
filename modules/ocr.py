@@ -118,7 +118,7 @@ def _rpicam_capture() -> "cv2 frame | None":
         RPICAM_BIN,
         "-o", tmp,
         "-n",                        # no preview window
-        "-t", "3000",                # 3 s settle time for macro autofocus (ms)
+        "-t", "2000",                # 2 s settle time for macro autofocus (ms)
         "--width",   "1920",
         "--height",  "1080",
         "--quality", "90",
@@ -512,6 +512,7 @@ class GeminiOCREngine:
         Raises on any failure — caller must catch and fall back.
         """
         from google.genai import types  # local import, same reason as above
+        import httpx
 
         client = self._get_client()
 
@@ -520,6 +521,7 @@ class GeminiOCREngine:
         image_bytes = buf.getvalue()
 
         t0 = time.time()
+        timeout_s = self._timeout_s
         response = client.models.generate_content(
             model=self._model_name,
             contents=[
@@ -528,6 +530,9 @@ class GeminiOCREngine:
                 "Return ONLY the text you see, with no extra commentary, "
                 "no markdown, and no labels like 'Text:'.",
             ],
+            config=types.GenerateContentConfig(
+                http_options=types.HttpOptions(timeout=timeout_s * 1000),
+            ),
         )
         elapsed_ms = int((time.time() - t0) * 1000)
 
@@ -589,36 +594,56 @@ def scan_and_read(lang: str = "eng") -> str:
 
     engine_name = str(_config.get("ocr_engine", "auto")).lower()
 
-    # In auto mode, Gemini is still the first choice when configured, but any
-    # failure drops to fast local OCR instead of the heavy Surya model.
+    # ── Helper: detect Gemini "I see no text" style answers ──────────
+    _no_text_phrases = ("no text", "no visible text", "no readable text",
+                        "i cannot", "i can't", "there is no")
+
+    def _is_usable(t: str) -> bool:
+        """True when `t` looks like real OCR content, not an error/empty."""
+        if not t:
+            return False
+        low = t.lower()
+        if low.startswith(("ocr unavailable", "ocr error")):
+            return False
+        if "no text detected" in low:
+            return False
+        if any(p in low for p in _no_text_phrases):
+            return False
+        return True
+
+    # ── FAST PATH: Tesseract first (typically < 300 ms on Pi) ────────
+    # In auto mode, run Tesseract first. If it finds a reasonable amount
+    # of text we return immediately — no need for a slow cloud round-trip.
+    _MIN_CHARS_FOR_FAST_RETURN = 10  # below this, Gemini gets a second look
+
+    if engine_name in ("auto", "tesseract", "gemini"):
+        tess_text = _tesseract_engine.extract_text(pil_image, lang=lang)
+        tess_ok = _is_usable(tess_text)
+
+        # Tesseract found enough text → return immediately (fast path)
+        if tess_ok and len(tess_text.strip()) >= _MIN_CHARS_FOR_FAST_RETURN:
+            return tess_text
+
+    # ── SLOW PATH: Gemini cloud OCR (typically 5–20 s) ───────────────
+    # Only reached when Tesseract returned too little text or is disabled.
     if engine_name in ("auto", "gemini") and _config.get("gemini_api_key"):
         try:
-            text = _gemini_engine.extract_text(pil_image, lang=lang)
-            text_lower = text.lower() if text else ""
-            # Detect Gemini "no text" responses so we still fall through to Tesseract
-            _no_text_phrases = ("no text", "no visible text", "no readable text",
-                                "i cannot", "i can't", "there is no")
-            gemini_saw_nothing = any(phrase in text_lower for phrase in _no_text_phrases)
-            if text and not text_lower.startswith(("ocr unavailable", "ocr error")) and not gemini_saw_nothing:
-                return text
-            if gemini_saw_nothing:
-                logger.info(f"Gemini found no text, falling back to local OCR: {text!r}")
+            gemini_text = _gemini_engine.extract_text(pil_image, lang=lang)
+            if _is_usable(gemini_text):
+                return gemini_text
+            logger.info(f"Gemini found no text, using Tesseract result: {gemini_text!r}")
         except Exception as e:
-            logger.warning(f"Gemini OCR unavailable, falling back to local OCR: {e}")
+            logger.warning(f"Gemini OCR unavailable, using Tesseract result: {e}")
 
-    if engine_name in ("auto", "gemini", "tesseract"):
-        text = _tesseract_engine.extract_text(pil_image, lang=lang)
-        text_lower = text.lower() if text else ""
-        if (
-            text
-            and not text_lower.startswith(("ocr unavailable", "ocr error"))
-            and "no text detected" not in text_lower
-        ):
-            return text
-
-        if not _config.get("ocr_surya_fallback", False):
-            return text
-        logger.warning(f"Tesseract OCR did not produce usable text, trying Surya: {text}")
+    # ── Return whatever Tesseract got (may be sparse or empty) ───────
+    if engine_name in ("auto", "tesseract", "gemini"):
+        if tess_ok:
+            return tess_text
+        # Tesseract also failed — optionally try Surya as last resort
+        if _config.get("ocr_surya_fallback", False):
+            logger.warning(f"Tesseract OCR did not produce usable text, trying Surya: {tess_text}")
+            return _engine.extract_text(pil_image, lang=lang)
+        return tess_text  # return whatever we got, even if sparse
 
     return _engine.extract_text(pil_image, lang=lang)
 

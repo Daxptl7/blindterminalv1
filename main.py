@@ -332,7 +332,6 @@ def _keyboard_input(prompt: str = "", default=None):
 def mode_ocr_scan():
     """Mode 1: OCR Scan → AI → TTS"""
     logger.info("Mode 1: OCR Scan")
-    _speak("Starting OCR scan. Hold your document steady.")
 
     if not _has("ocr"):
         _speak("OCR module is not available.")
@@ -346,6 +345,7 @@ def mode_ocr_scan():
         return
 
     try:
+        # Non-blocking: plays "Scanning now" while capture runs in parallel
         _speak("Scanning now.")
         # UPDATED FOR NEW ocr.py: scan_and_read() now only takes lang= —
         # it opens/captures/reads the camera internally, so cap/cam_type
