@@ -118,7 +118,7 @@ def _rpicam_capture() -> "cv2 frame | None":
         RPICAM_BIN,
         "-o", tmp,
         "-n",                        # no preview window
-        "-t", "1500",                # 1.5 s settle time (ms)
+        "-t", "3000",                # 3 s settle time for macro autofocus (ms)
         "--width",   "1920",
         "--height",  "1080",
         "--quality", "90",
@@ -594,8 +594,15 @@ def scan_and_read(lang: str = "eng") -> str:
     if engine_name in ("auto", "gemini") and _config.get("gemini_api_key"):
         try:
             text = _gemini_engine.extract_text(pil_image, lang=lang)
-            if text and not text.lower().startswith(("ocr unavailable", "ocr error")):
+            text_lower = text.lower() if text else ""
+            # Detect Gemini "no text" responses so we still fall through to Tesseract
+            _no_text_phrases = ("no text", "no visible text", "no readable text",
+                                "i cannot", "i can't", "there is no")
+            gemini_saw_nothing = any(phrase in text_lower for phrase in _no_text_phrases)
+            if text and not text_lower.startswith(("ocr unavailable", "ocr error")) and not gemini_saw_nothing:
                 return text
+            if gemini_saw_nothing:
+                logger.info(f"Gemini found no text, falling back to local OCR: {text!r}")
         except Exception as e:
             logger.warning(f"Gemini OCR unavailable, falling back to local OCR: {e}")
 
@@ -633,7 +640,18 @@ if __name__ == "__main__":
         print("ERROR: No camera found. Exiting.")
         raise SystemExit(1)
 
-    print("Camera open. Scanning …")
+    # Capture and save a debug copy so we can inspect what the camera sees
+    print("Camera open. Capturing frame …")
+    _cam = CameraManager()
+    frame = _cam.capture()
+    if frame is not None:
+        debug_path = "/tmp/ocr_debug.jpg"
+        cv2.imwrite(debug_path, frame)
+        print(f"DEBUG: Captured frame saved to {debug_path}")
+    else:
+        print("WARNING: capture() returned None")
+
+    print("Running OCR …")
     result = scan_and_read(lang="eng")
 
     print("\nOCR Output:")

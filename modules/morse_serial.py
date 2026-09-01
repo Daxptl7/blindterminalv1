@@ -18,18 +18,74 @@ confidential_mode.py can call.
 Falls back gracefully (raises a clear error that main.py already
 catches) if no Pico W is connected — e.g. while you are coding on a
 laptop without the hardware attached.
+
+RECONNECT BEHAVIOUR
+-------------------
+A USB-serial link is not permanent. If the Pico W resets, the cable is
+nudged, or another process grabs the port, pyserial raises
+"device reports readiness to read but returned no data". The old code
+caught that, slept, and retried forever on the SAME dead handle — so the
+buttons went permanently deaf while the app carried on as if nothing had
+happened. For a blind user that is the worst possible failure: silence
+is indistinguishable from "I did not press hard enough".
+
+The reader thread now closes the dead handle and re-opens the port,
+backing off between attempts. It re-globs the device path every time,
+because a Pico that reboots often comes back as a DIFFERENT node
+(/dev/ttyACM0 -> /dev/ttyACM1). Repeated identical failures collapse
+into one log line plus a periodic summary instead of spamming the log.
+Callers can poll is_connected() — or pass on_state_change — so the user
+can actually be TOLD the buttons stopped working.
 """
 
 import glob
+import json
+import logging
 import queue
 import threading
 import time
+from pathlib import Path
 
 import serial
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+LOG_PATH = BASE_DIR / "logs" / "morse_serial.log"
+CONFIG_PATH = BASE_DIR / "config" / "settings.json"
+
+LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+logger = logging.getLogger("MorseSerialModule")
+
+_settings = {}
+try:
+    with open(CONFIG_PATH, 'r') as f:
+        _settings = json.load(f)
+except Exception:
+    pass
+
+# Configured port wins over auto-detection; "" or absent means auto-detect.
+MORSE_PORT = str(_settings.get("morse_port", "") or "").strip()
+
+# Reconnect pacing. Starts fast (a Pico reset re-enumerates in ~1-2s) and
+# backs off to RECONNECT_MAX so an unplugged cable does not burn CPU or
+# flood the log for hours.
+RECONNECT_BACKOFF_START = 0.5
+RECONNECT_BACKOFF_MAX = 5.0
+# While the link is down, emit one "still down" line every N seconds
+# rather than one per failed attempt.
+DOWN_LOG_INTERVAL = 30.0
+
 
 def find_pico_port():
-    """Auto-detect the Pico W's serial device path."""
+    """
+    Resolve the Pico W's serial device path.
+
+    Honours the "morse_port" setting when present so a Pi with several
+    USB-serial gadgets attached can pin the right one; otherwise falls
+    back to the lowest-numbered /dev/ttyACM* node.
+    """
+    if MORSE_PORT:
+        return MORSE_PORT
     candidates = sorted(glob.glob("/dev/ttyACM*"))
     if not candidates:
         raise RuntimeError("No Pico W detected. Check the USB cable connection.")
@@ -37,25 +93,115 @@ def find_pico_port():
 
 
 class MorseSerial:
-    def __init__(self, baudrate: int = 115200):
-        port = find_pico_port()
-        self.ser = serial.Serial(port, baudrate, timeout=1)
+    def __init__(self, baudrate: int = 115200, on_state_change=None):
+        """
+        on_state_change(connected: bool, detail: str) — optional callback
+        fired when the link drops or comes back, so main.py can speak a
+        warning. Never called from the caller's thread: it runs on the
+        reader thread, so keep it short and non-blocking (tts.speak() is
+        already queue-based, so it is safe).
+        """
+        self.baudrate = baudrate
+        self.on_state_change = on_state_change
+        self.port = find_pico_port()
+        self.ser = serial.Serial(self.port, baudrate, timeout=1)
         self.message_queue = queue.Queue()
         self.running = True
         self.current_word = ""
+        self._connected = True
+        self._last_error = None
+        self._last_down_log = 0.0
+        self._failed_attempts = 0
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
         self._thread.start()
-        print(f"[morse_serial] Connected to Pico W on {port}")
+        logger.info(f"Connected to Pico W on {self.port}")
+        print(f"[morse_serial] Connected to Pico W on {self.port}")
+
+    # ── link state ───────────────────────────────────────────
+    def is_connected(self) -> bool:
+        """True while the reader thread is successfully talking to the Pico."""
+        return self._connected
+
+    def _set_connected(self, connected: bool, detail: str = ""):
+        if connected == self._connected:
+            return
+        self._connected = connected
+        if self.on_state_change:
+            try:
+                self.on_state_change(connected, detail)
+            except Exception as e:
+                logger.warning(f"on_state_change callback failed: {e}")
+
+    def _mark_down(self, error):
+        """Record a read failure, collapsing repeated identical errors."""
+        text = str(error)
+        self._failed_attempts += 1
+        now = time.time()
+        first_time = text != self._last_error
+        if first_time:
+            self._last_error = text
+            self._last_down_log = now
+            logger.error(f"Read error: {text}")
+            print(f"[morse_serial] Read error: {text}")
+            print("[morse_serial] Buttons are unresponsive — attempting to reconnect...")
+        elif now - self._last_down_log >= DOWN_LOG_INTERVAL:
+            self._last_down_log = now
+            msg = f"Still disconnected after {self._failed_attempts} attempts: {text}"
+            logger.error(msg)
+            print(f"[morse_serial] {msg}")
+        self._set_connected(False, text)
+
+    def _mark_up(self):
+        """Called after a clean read — the link is healthy."""
+        if self._failed_attempts:
+            logger.info(f"Reconnected after {self._failed_attempts} failed attempts.")
+            print("[morse_serial] Reconnected — buttons are live again.")
+        self._failed_attempts = 0
+        self._last_error = None
+        self._set_connected(True, "")
+
+    def _reconnect(self) -> bool:
+        """
+        Drop the dead handle and re-open the port. Re-globs the path first:
+        a Pico that reboots can come back on a different /dev/ttyACM node,
+        so reusing the cached path would fail forever.
+        """
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+        try:
+            self.port = find_pico_port()
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
+            return True
+        except Exception:
+            # Port not back yet — caller backs off and retries.
+            return False
 
     def _read_loop(self):
+        backoff = RECONNECT_BACKOFF_START
         while self.running:
             try:
                 line = self.ser.readline().decode("utf-8", errors="ignore").strip()
                 if line:
                     self.message_queue.put(line)
+                    self._mark_up()
+                    backoff = RECONNECT_BACKOFF_START
             except Exception as e:
-                print(f"[morse_serial] Read error: {e}")
-                time.sleep(0.5)
+                # close() flips self.running first, so a shutdown race that
+                # trips readline() must not be reported as a fault.
+                if not self.running:
+                    break
+                self._mark_down(e)
+                # Always pause BEFORE retrying, and only ever reset the
+                # backoff on a genuinely successful read (see _mark_up
+                # above). Re-opening the port is not proof the link works:
+                # when ModemManager is holding /dev/ttyACM0, or the cable is
+                # half-dead, open() succeeds and every read still fails —
+                # treating that as recovery spins this thread at 100% CPU.
+                time.sleep(backoff)
+                backoff = min(backoff * 2, RECONNECT_BACKOFF_MAX)
+                self._reconnect()
 
     def get_message(self, timeout=None):
         """Blocking or non-blocking read of the next raw message, e.g. 'LETTER:A'."""
