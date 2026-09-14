@@ -680,12 +680,12 @@ class TTSManager:
                         self._proc = proc
                     proc.wait(timeout=120)
                     if proc.returncode == 0:
-                     return True
-                    stdout, stderr = proc.communicate()
-                    logger.error(
-                       f"Routed playback failed (exit {proc.returncode}): "
-                       f"{' '.join(template)}\nSTDOUT: {stdout}\nSTDERR: {stderr}"
-                )
+			return True
+		    stdout, stderr = proc.communicate()
+		    logger.error(
+    			f"Routed playback failed (exit {proc.returncode}): "
+  			f"{' '.join(template)}\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+		)
                 except subprocess.TimeoutExpired:
                     logger.error("Routed audio player timed out.")
                     try:

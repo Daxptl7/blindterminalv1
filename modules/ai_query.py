@@ -641,7 +641,7 @@ def _ask_groq(prompt: str, simplify: bool = False,
     try:
         system = SYSTEM_PROMPT + (" Use very simple words." if simplify else "")
         resp = _with_timeout(_groq_client, timeout).chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": prompt}],
             max_tokens=200,
