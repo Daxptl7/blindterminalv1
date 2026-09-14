@@ -3,7 +3,8 @@
 # ============================================================
 # Install AFTER requirements.txt on Raspberry Pi OS (Bookworm)
 # These require system-level libraries:
-#   sudo apt install portaudio19-dev libsdl2-dev tesseract-ocr
+#   sudo apt install portaudio19-dev libsdl2-dev tesseract-ocr \
+#     tesseract-ocr-eng tesseract-ocr-hin tesseract-ocr-guj
 # ============================================================
 
 # Audio hardware & offline STT

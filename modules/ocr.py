@@ -1,7 +1,7 @@
 """
 ocr.py — BlindAssist Project
 ==============================
-Surya OCR 2  ·  Pi Camera Module 3 (macro autofocus)  ·  USB camera fallback
+Surya OCR 2  ·  Pi Camera Module 3 (full-range autofocus)  ·  USB camera fallback
 All 5 bugs from the previous version have been corrected.
 
 SURYA OCR 2 API FIX (this version): the previous SuryaOCREngine constructed
@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 import json
+import math
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,13 +85,29 @@ def _load_config() -> dict:
         "ocr_surya_fallback": False,
         "ocr_preload":      False,
         "ocr_capture_frames": 3,
-        "ocr_capture_width": 2304,
-        "ocr_capture_height": 1728,
+        # Camera Module 3 native still resolution. Full-page textbook print
+        # needs the sensor detail; 2304x1728 threw much of it away before OCR.
+        "ocr_capture_width": 4608,
+        "ocr_capture_height": 2592,
+        "ocr_capture_quality": 95,
+        "ocr_autofocus_mode": "auto",
+        "ocr_autofocus_range": "full",
+        "ocr_autofocus_speed": "normal",
+        "ocr_autofocus_settle_ms": 2500,
+        "ocr_autofocus_window": "0.05,0.05,0.90,0.90",
+        "ocr_tile_size": 1800,
+        "ocr_tile_overlap": 180,
         "ocr_gemini_first": True,
+        "ocr_gemini_image_format": "JPEG",
+        "ocr_gemini_image_quality": 95,
+        "ocr_gemini_media_resolution": "high",
+        "ocr_gemini_timeout_s": 20,
+        "ocr_gemini_min_words": 12,
+        "ocr_gemini_coverage_check_min_pixels": 2000000,
         "ocr_tesseract_min_confidence": 45,
-        "ocr_tesseract_psm_modes": "6,4,11",
+        "ocr_tesseract_psm_modes": "3,6,4,11",
         "gemini_api_key":   "",
-        "gemini_model_name": "gemini-3-flash-lite",
+        "gemini_model_name": "gemini-3.5-flash-lite",
         "gemini_timeout_s": 8,
     }
     try:
@@ -117,10 +134,24 @@ def _config_int(key: str, default: int, min_value: int, max_value: int) -> int:
 
 
 def _sharpness_score(frame: np.ndarray) -> float:
-    """Higher score means sharper text edges; used to pick the best capture."""
+    """Higher score means text edges are sharp across most of the frame.
+
+    A single whole-frame Laplacian score is easily dominated by one sharp page
+    edge, a hand, or a textured background while the textbook itself is soft.
+    The median of a 3x3 grid rewards captures whose detail is distributed.
+    """
     try:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        height, width = gray.shape[:2]
+        scores = []
+        for row in range(3):
+            for col in range(3):
+                y0, y1 = row * height // 3, (row + 1) * height // 3
+                x0, x1 = col * width // 3, (col + 1) * width // 3
+                region = gray[y0:y1, x0:x1]
+                if region.size:
+                    scores.append(float(cv2.Laplacian(region, cv2.CV_64F).var()))
+        return float(np.median(scores)) if scores else 0.0
     except Exception:
         return 0.0
 
@@ -130,7 +161,7 @@ def _sharpness_score(frame: np.ndarray) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 def _rpicam_capture() -> "cv2 frame | None":
     """
-    Captures one frame via rpicam-still with macro autofocus.
+    Captures one frame via rpicam-still with document-wide autofocus.
     Returns a BGR numpy array, or None on failure.
     """
     if not RPICAM_BIN or not os.path.exists(RPICAM_BIN):
@@ -138,27 +169,52 @@ def _rpicam_capture() -> "cv2 frame | None":
         return None
 
     tmp = os.path.join(tempfile.gettempdir(), f"aet_ocr_cap_{os.getpid()}_{time.time_ns()}.jpg")
-    width = str(_config_int("ocr_capture_width", 2304, 640, 4608))
-    height = str(_config_int("ocr_capture_height", 1728, 480, 3456))
+    width = str(_config_int("ocr_capture_width", 4608, 640, 4608))
+    height = str(_config_int("ocr_capture_height", 2592, 480, 2592))
+    quality = str(_config_int("ocr_capture_quality", 95, 75, 100))
+    settle_ms = str(_config_int("ocr_autofocus_settle_ms", 2500, 500, 8000))
     cmd = [
         RPICAM_BIN,
         "-o", tmp,
         "-n",                        # no preview window
-        "-t", "2000",                # 2 s settle time for macro autofocus (ms)
+        "-t", settle_ms,
         "--width",   width,
         "--height",  height,
-        "--quality", "90",
+        "--quality", quality,
     ]
 
-    # Macro autofocus is only supported by the newer rpicam-still binary
+    # These autofocus controls are supported by the newer rpicam-still binary.
     if "rpicam-still" in RPICAM_BIN:
-        cmd += ["--autofocus-mode", "auto", "--autofocus-range", "macro"]
+        af_mode = str(_config.get("ocr_autofocus_mode", "auto")).lower()
+        af_range = str(_config.get("ocr_autofocus_range", "full")).lower()
+        af_speed = str(_config.get("ocr_autofocus_speed", "normal")).lower()
+        if af_mode not in {"auto", "continuous", "manual"}:
+            af_mode = "auto"
+        if af_range not in {"normal", "macro", "full"}:
+            af_range = "full"
+        if af_speed not in {"normal", "fast"}:
+            af_speed = "normal"
+        cmd += [
+            "--autofocus-mode", af_mode,
+            "--autofocus-range", af_range,
+            "--autofocus-speed", af_speed,
+        ]
+
+        # rpicam accepts a normalized x,y,width,height autofocus region. Keep
+        # it opt-in because camera mounting and page framing vary by device.
+        af_window = str(_config.get(
+            "ocr_autofocus_window", "0.05,0.05,0.90,0.90"
+        )).strip()
+        if re.fullmatch(r"(?:0(?:\.\d+)?|1(?:\.0+)?)(?:,(?:0(?:\.\d+)?|1(?:\.0+)?)){3}", af_window):
+            cmd += ["--autofocus-window", af_window]
 
     try:
         subprocess.run(cmd, capture_output=True, timeout=10, check=True)
         frame = cv2.imread(tmp)
         if frame is None:
             logger.error("rpicam-still wrote nothing or file is unreadable.")
+        else:
+            logger.info("Captured Pi still at %sx%s", frame.shape[1], frame.shape[0])
         return frame
     except subprocess.TimeoutExpired:
         logger.error("rpicam-still timed out after 10 seconds.")
@@ -431,6 +487,9 @@ class TesseractCandidate:
     word_count: int
     variant: str
     psm: int
+    line_count: int = 0
+    vertical_coverage: float = 0.0
+    low_confidence_ratio: float = 0.0
 
     @property
     def score(self) -> float:
@@ -438,11 +497,18 @@ class TesseractCandidate:
         signal = sum(1 for ch in self.text if ch.isalpha() or ch.isdigit())
         signal_ratio = signal / max(chars, 1)
         noise_penalty = max(0.0, 0.45 - signal_ratio) * 80.0
+        low_confidence_penalty = self.low_confidence_ratio * 18.0
         return (
             self.avg_confidence
-            + min(self.word_count * 1.8, 25.0)
-            + min(chars / 12.0, 20.0)
+            # Logarithmic, non-saturating coverage bonuses distinguish a full
+            # textbook page from a crisp eight-word heading without letting
+            # pure noise win merely by being long.
+            + math.log1p(self.word_count) * 5.0
+            + math.log1p(max(chars, 0)) * 1.5
+            + min(self.line_count, 24) * 0.55
+            + self.vertical_coverage * 24.0
             - noise_penalty
+            - low_confidence_penalty
         )
 
 
@@ -491,7 +557,7 @@ class TesseractOCREngine:
 
     @staticmethod
     def _parse_psm_modes() -> list[int]:
-        raw = _config.get("ocr_tesseract_psm_modes", "6,4,11")
+        raw = _config.get("ocr_tesseract_psm_modes", "3,6,4,11")
         parts = raw if isinstance(raw, (list, tuple)) else str(raw).split(",")
         modes = []
         for part in parts:
@@ -501,7 +567,7 @@ class TesseractOCREngine:
                 continue
             if mode not in modes and 3 <= mode <= 13:
                 modes.append(mode)
-        return modes or [6, 4, 11]
+        return modes or [3, 6, 4, 11]
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -615,8 +681,12 @@ class TesseractOCREngine:
                 gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
             gray = cls._deskew(gray)
+            # Keep one unfiltered grayscale path. Fine, pale strokes can be
+            # removed by denoising/thresholding, while Tesseract often does a
+            # better job when allowed to binarize the source itself.
+            raw = gray
             clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8)).apply(gray)
-            denoised = cv2.fastNlMeansDenoising(clahe, h=12)
+            denoised = cv2.fastNlMeansDenoising(clahe, h=8)
             blur = cv2.GaussianBlur(denoised, (0, 0), 1.0)
             sharp = cv2.addWeighted(denoised, 1.55, blur, -0.55, 0)
             adaptive = cv2.adaptiveThreshold(
@@ -630,6 +700,7 @@ class TesseractOCREngine:
             otsu = cv2.threshold(sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
             for name, arr in (
+                (f"{base_name}-raw-gray", raw),
                 (f"{base_name}-enhanced", sharp),
                 (f"{base_name}-adaptive", adaptive),
                 (f"{base_name}-otsu", otsu),
@@ -640,7 +711,72 @@ class TesseractOCREngine:
                 seen.add(key)
                 variants.append((name, Image.fromarray(arr)))
 
-        return variants[:6]
+        return variants[:8]
+
+    @staticmethod
+    def _rotation_images(pil_image: Image.Image) -> list[tuple[str, Image.Image]]:
+        """Return all right-angle orientations without changing the input."""
+        source = pil_image.convert("RGB")
+        return [
+            ("rot0", source),
+            ("rot90", source.rotate(90, expand=True)),
+            ("rot180", source.rotate(180, expand=True)),
+            ("rot270", source.rotate(270, expand=True)),
+        ]
+
+    @classmethod
+    def _page_region(cls, pil_image: Image.Image) -> Image.Image:
+        """Prefer a detected document while retaining a safe full-frame fallback."""
+        rgb = np.array(pil_image.convert("RGB"))
+        cropped = cls._document_crop(rgb)
+        return Image.fromarray(cropped) if cropped is not None else pil_image.convert("RGB")
+
+    @classmethod
+    def _tile_images(cls, pil_image: Image.Image) -> list[tuple[str, Image.Image]]:
+        """Build overlapping native-resolution tiles in stable reading order."""
+        page = cls._page_region(pil_image)
+        gray = cv2.cvtColor(np.array(page), cv2.COLOR_RGB2GRAY)
+        gray = cls._deskew(gray)
+        height, width = gray.shape[:2]
+        tile_size = _config_int("ocr_tile_size", 1800, 900, 2400)
+        overlap = _config_int("ocr_tile_overlap", 180, 64, min(600, tile_size // 3))
+
+        if width <= tile_size and height <= tile_size:
+            return []
+
+        def positions(length: int) -> list[int]:
+            if length <= tile_size:
+                return [0]
+            step = tile_size - overlap
+            starts = list(range(0, max(length - tile_size + 1, 1), step))
+            final = length - tile_size
+            if not starts or starts[-1] != final:
+                starts.append(final)
+            return starts
+
+        tiles = []
+        for row, y0 in enumerate(positions(height)):
+            for col, x0 in enumerate(positions(width)):
+                tile = gray[y0:min(y0 + tile_size, height), x0:min(x0 + tile_size, width)]
+                tiles.append((f"tile-r{row}-c{col}", Image.fromarray(tile)))
+        return tiles
+
+    @staticmethod
+    def _merge_overlapping_text(parts: list[str]) -> str:
+        """Merge OCR tile text while removing exact token overlap at boundaries."""
+        merged: list[str] = []
+        for part in parts:
+            tokens = str(part or "").split()
+            if not tokens:
+                continue
+            max_overlap = min(40, len(merged), len(tokens))
+            overlap = 0
+            for count in range(max_overlap, 2, -1):
+                if [t.lower() for t in merged[-count:]] == [t.lower() for t in tokens[:count]]:
+                    overlap = count
+                    break
+            merged.extend(tokens[overlap:])
+        return " ".join(merged).strip()
 
     def _resolve_lang(self, pytesseract, lang: str) -> str:
         configured = str(_config.get("ocr_tesseract_languages", "")).strip()
@@ -670,9 +806,18 @@ class TesseractOCREngine:
         return "+".join(requested_parts)
 
     @classmethod
-    def _candidate_from_data(cls, data: dict, variant: str, psm: int) -> TesseractCandidate:
+    def _candidate_from_data(
+        cls,
+        data: dict,
+        variant: str,
+        psm: int,
+        image_size: tuple[int, int] | None = None,
+    ) -> TesseractCandidate:
         words_by_line = {}
         confidences = []
+        low_confidence_words = 0
+        occupied_bands = set()
+        image_height = image_size[1] if image_size else 0
 
         total = len(data.get("text", []))
         for i in range(total):
@@ -688,6 +833,18 @@ class TesseractOCREngine:
 
             if confidence >= 0:
                 confidences.append(confidence)
+                if confidence < 40:
+                    low_confidence_words += 1
+
+            if image_height > 0:
+                try:
+                    top = int(data.get("top", [0])[i])
+                    box_height = int(data.get("height", [0])[i])
+                    first_band = max(0, min(19, int(20 * top / image_height)))
+                    last_band = max(0, min(19, int(20 * (top + box_height) / image_height)))
+                    occupied_bands.update(range(first_band, last_band + 1))
+                except Exception:
+                    pass
 
             block = data.get("block_num", [0])[i]
             par = data.get("par_num", [0])[i]
@@ -698,33 +855,162 @@ class TesseractOCREngine:
         normalized = cls._normalize_text("\n".join(lines))
         avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
         word_count = sum(len(line.split()) for line in lines)
-        return TesseractCandidate(normalized, avg_conf, word_count, variant, psm)
+        low_ratio = low_confidence_words / max(len(confidences), 1)
+        return TesseractCandidate(
+            normalized,
+            avg_conf,
+            word_count,
+            variant,
+            psm,
+            line_count=len(lines),
+            vertical_coverage=len(occupied_bands) / 20.0,
+            low_confidence_ratio=low_ratio,
+        )
+
+    @classmethod
+    def _candidate_from_tiles(
+        cls,
+        candidates: list[TesseractCandidate],
+        variant: str,
+        psm: int,
+    ) -> TesseractCandidate:
+        usable = [candidate for candidate in candidates if candidate.text]
+        if not usable:
+            return TesseractCandidate("", 0.0, 0, variant, psm)
+        text = cls._merge_overlapping_text([candidate.text for candidate in usable])
+        weight = sum(max(candidate.word_count, 1) for candidate in usable)
+        avg_conf = sum(
+            candidate.avg_confidence * max(candidate.word_count, 1)
+            for candidate in usable
+        ) / max(weight, 1)
+        low_ratio = sum(
+            candidate.low_confidence_ratio * max(candidate.word_count, 1)
+            for candidate in usable
+        ) / max(weight, 1)
+        return TesseractCandidate(
+            text=text,
+            avg_confidence=avg_conf,
+            word_count=len(text.split()),
+            variant=variant,
+            psm=psm,
+            line_count=sum(candidate.line_count for candidate in usable),
+            vertical_coverage=len(usable) / max(len(candidates), 1),
+            low_confidence_ratio=low_ratio,
+        )
 
     def _best_candidate(self, pytesseract, pil_image: Image.Image, tess_lang: str) -> TesseractCandidate:
         best = TesseractCandidate("", 0.0, 0, "none", 6)
-        min_conf = float(_config.get("ocr_tesseract_min_confidence", 45))
 
-        for variant_name, variant_image in self._variant_images(pil_image):
-            for psm in self._parse_psm_modes():
+        # Probe all right-angle rotations on a bounded-size raw grayscale
+        # image, then fully process the winner (plus a close runner-up). This
+        # avoids multiplying every expensive enhancement/tile pass by four.
+        orientation_probes = []
+        for rotation_name, rotation_image in self._rotation_images(pil_image):
+            probe = rotation_image.convert("L")
+            max_dimension = max(probe.size)
+            if max_dimension > 1600:
+                scale = 1600 / max_dimension
+                probe = probe.resize(
+                    (max(1, int(probe.width * scale)), max(1, int(probe.height * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            data = pytesseract.image_to_data(
+                probe,
+                lang=tess_lang,
+                config="--oem 1 --psm 11 --dpi 300",
+                output_type=pytesseract.Output.DICT,
+            )
+            candidate = self._candidate_from_data(
+                data,
+                f"{rotation_name}-probe",
+                11,
+                image_size=probe.size,
+            )
+            # Prefer no rotation when evidence is otherwise indistinguishable.
+            orientation_probes.append((
+                candidate.score + (1.5 if rotation_name == "rot0" else 0.0),
+                rotation_name,
+                rotation_image,
+                candidate,
+            ))
+
+        orientation_probes.sort(key=lambda item: item[0], reverse=True)
+        selected_orientations = orientation_probes[:1]
+        top_probe = orientation_probes[0][3]
+        if (
+            len(orientation_probes) > 1
+            and top_probe.word_count < 8
+            and top_probe.avg_confidence < 55.0
+            and orientation_probes[0][0] - orientation_probes[1][0] < 8.0
+        ):
+            selected_orientations.append(orientation_probes[1])
+
+        best_orientation_image = selected_orientations[0][2]
+        best_orientation_score = -float("inf")
+        psm_modes = self._parse_psm_modes()
+
+        for _, rotation_name, rotation_image, _ in selected_orientations:
+            orientation_best = TesseractCandidate("", 0.0, 0, "none", 6)
+            for variant_name, variant_image in self._variant_images(rotation_image):
+                for psm in psm_modes:
+                    config = (
+                        f"--oem 1 --psm {psm} --dpi 300 "
+                        "-c preserve_interword_spaces=1 "
+                        "-c textord_heavy_nr=1"
+                    )
+                    data = pytesseract.image_to_data(
+                        variant_image,
+                        lang=tess_lang,
+                        config=config,
+                        output_type=pytesseract.Output.DICT,
+                    )
+                    candidate = self._candidate_from_data(
+                        data,
+                        f"{rotation_name}-{variant_name}",
+                        psm,
+                        image_size=variant_image.size,
+                    )
+                    if candidate.score > orientation_best.score:
+                        orientation_best = candidate
+                    if candidate.score > best.score:
+                        best = candidate
+            if orientation_best.score > best_orientation_score:
+                best_orientation_score = orientation_best.score
+                best_orientation_image = rotation_image
+
+        # Preserve native pixels for the page-region tile pass. One PSM keeps
+        # latency bounded; full-image variants above still exercise every
+        # configured segmentation mode.
+        tiles = self._tile_images(best_orientation_image)
+        if tiles:
+            tile_psm = 6 if 6 in psm_modes else psm_modes[0]
+            tile_candidates = []
+            for tile_name, tile_image in tiles:
                 config = (
-                    f"--oem 1 --psm {psm} --dpi 300 "
+                    f"--oem 1 --psm {tile_psm} --dpi 300 "
                     "-c preserve_interword_spaces=1 "
                     "-c textord_heavy_nr=1"
                 )
                 data = pytesseract.image_to_data(
-                    variant_image,
+                    tile_image,
                     lang=tess_lang,
                     config=config,
                     output_type=pytesseract.Output.DICT,
                 )
-                candidate = self._candidate_from_data(data, variant_name, psm)
-                if candidate.score > best.score:
-                    best = candidate
-                if candidate.avg_confidence >= 82 and candidate.word_count >= 8:
-                    return candidate
+                tile_candidates.append(self._candidate_from_data(
+                    data,
+                    tile_name,
+                    tile_psm,
+                    image_size=tile_image.size,
+                ))
+            tiled = self._candidate_from_tiles(
+                tile_candidates,
+                "native-overlapping-tiles",
+                tile_psm,
+            )
+            if tiled.score > best.score:
+                best = tiled
 
-        if best.text and best.avg_confidence >= min_conf:
-            return best
         return best
 
     def extract_text(self, pil_image: Image.Image, lang: str = "eng") -> str:
@@ -737,6 +1023,7 @@ class TesseractOCREngine:
             t0 = time.time()
             tess_lang = self._resolve_lang(pytesseract, lang)
             best = self._best_candidate(pytesseract, pil_image, tess_lang)
+            min_conf = float(_config.get("ocr_tesseract_min_confidence", 45))
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.info(
                 "Tesseract OCR done in %s ms | chars=%s | confidence=%.1f | "
@@ -748,7 +1035,13 @@ class TesseractOCREngine:
                 best.psm,
             )
 
-            if not best.text:
+            if not best.text or best.avg_confidence < min_conf:
+                if best.text:
+                    logger.warning(
+                        "Rejecting low-confidence OCR candidate | confidence=%.1f | minimum=%.1f",
+                        best.avg_confidence,
+                        min_conf,
+                    )
                 return "No text detected in the image."
             return best.text
 
@@ -785,7 +1078,7 @@ class GeminiOCREngine:
                 if cls._instance is None:
                     obj = super().__new__(cls)
                     obj._client       = None
-                    obj._model_name   = _config.get("gemini_model_name", "gemini-3-flash-lite")
+                    obj._model_name   = _config.get("gemini_model_name", "gemini-3.5-flash-lite")
                     obj._api_key      = _config.get("gemini_api_key", "")
                     obj._timeout_s    = _config.get("gemini_timeout_s", 8)
                     cls._instance     = obj
@@ -814,22 +1107,54 @@ class GeminiOCREngine:
         client = self._get_client()
 
         buf = io.BytesIO()
-        pil_image.save(buf, format="JPEG", quality=90)
+        image_format = str(_config.get("ocr_gemini_image_format", "JPEG")).upper()
+        if image_format == "PNG":
+            pil_image.save(buf, format="PNG")
+            mime_type = "image/png"
+        else:
+            image_format = "JPEG"
+            quality = _config_int("ocr_gemini_image_quality", 95, 85, 100)
+            pil_image.convert("RGB").save(
+                buf,
+                format="JPEG",
+                quality=quality,
+                subsampling=0,
+            )
+            mime_type = "image/jpeg"
         image_bytes = buf.getvalue()
 
         t0 = time.time()
-        timeout_s = self._timeout_s
+        try:
+            timeout_s = float(_config.get(
+                "ocr_gemini_timeout_s",
+                _config.get("gemini_timeout_s", self._timeout_s),
+            ))
+        except (TypeError, ValueError):
+            timeout_s = 20.0
+
+        config_kwargs = {
+            "http_options": types.HttpOptions(timeout=timeout_s * 1000),
+        }
+        if str(_config.get("ocr_gemini_media_resolution", "high")).lower() == "high":
+            media_resolution = getattr(
+                getattr(types, "MediaResolution", None),
+                "MEDIA_RESOLUTION_HIGH",
+                None,
+            )
+            if media_resolution is not None:
+                config_kwargs["media_resolution"] = media_resolution
+
         response = client.models.generate_content(
             model=self._model_name,
             contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                "Read all text visible in this image aloud-ready. "
-                "Return ONLY the text you see, with no extra commentary, "
-                "no markdown, and no labels like 'Text:'.",
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                "Transcribe every visible word in this document, including "
+                "small body text, headings, footnotes, labels, and page "
+                "numbers. Preserve paragraphs and natural reading order. "
+                "Do not summarize and do not guess unreadable words. Return "
+                "only the transcription, with no markdown or commentary.",
             ],
-            config=types.GenerateContentConfig(
-                http_options=types.HttpOptions(timeout=timeout_s * 1000),
-            ),
+            config=types.GenerateContentConfig(**config_kwargs),
         )
         elapsed_ms = int((time.time() - t0) * 1000)
 
@@ -916,8 +1241,24 @@ def scan_and_read(lang: str = "eng") -> str:
         try:
             gemini_text = _gemini_engine.extract_text(pil_image, lang=lang)
             if _is_usable(gemini_text):
-                return gemini_text
-            logger.info(f"Gemini found no usable text: {gemini_text!r}")
+                min_words = _config_int("ocr_gemini_min_words", 12, 1, 200)
+                word_count = len(re.findall(r"\S+", gemini_text))
+                min_pixels = _config_int(
+                    "ocr_gemini_coverage_check_min_pixels",
+                    2000000,
+                    100000,
+                    50000000,
+                )
+                is_full_page_capture = pil_image.width * pil_image.height >= min_pixels
+                if not is_full_page_capture or word_count >= min_words:
+                    return gemini_text
+                logger.warning(
+                    "Gemini OCR returned only %s word(s); running the local "
+                    "coverage check instead.",
+                    word_count,
+                )
+            else:
+                logger.info(f"Gemini found no usable text: {gemini_text!r}")
         except Exception as e:
             logger.warning(f"Gemini OCR unavailable, falling back locally: {e}")
         return ""
