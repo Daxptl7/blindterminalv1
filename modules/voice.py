@@ -100,6 +100,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -415,23 +416,59 @@ except Exception as e:
     logger.info(f"SpeechRecognition unavailable ({e}); Google/Sphinx STT disabled.")
 
 VOSK_AVAILABLE = False
-_vosk_model = None
-_vosk_model_dir: Optional[Path] = None
+VoskModel = None
+KaldiRecognizer = None
+_vosk_models = {}
+_vosk_model_dirs = {}
+_vosk_lock = threading.Lock()
+
+_STT_LANG_ALIASES = {
+    "en": "en", "eng": "en", "en-in": "en", "en-us": "en", "en-gb": "en",
+    "hi": "hi", "hin": "hi", "hi-in": "hi",
+    "gu": "gu", "guj": "gu", "gu-in": "gu",
+}
+
+
+def _stt_language_code(lang: str) -> str:
+    value = str(lang or "en").strip().lower().replace("_", "-")
+    return _STT_LANG_ALIASES.get(value, value.split("-", 1)[0])
 
 
 def _looks_like_vosk_model(path: Path) -> bool:
     return path.is_dir() and ((path / "am").is_dir() or (path / "conf").is_dir())
 
 
-def _find_vosk_model() -> Optional[Path]:
-    """Prefer the on-board copy: speech must work with the USB stick unplugged."""
+def _find_vosk_model(lang: str = "en") -> Optional[Path]:
+    """Find only the model explicitly associated with ``lang``.
+
+    A model for another language is worse than no model: it can return fluent-
+    looking garbage and prevent the online recognizer from being tried.
+    """
+    code = _stt_language_code(lang)
     roots: List[Path] = []
-    configured = _settings.get("vosk_model_path")
+    configured = _settings.get(f"vosk_model_path_{code}")
     if configured:
         p = Path(configured)
         roots.append(p if p.is_absolute() else BASE_DIR / p)
-    roots.append(BASE_DIR / "models_local" / "vosk")
-    roots.append(BASE_DIR / "models" / "vosk")
+
+    # The old single-path setting is English-only for backward compatibility.
+    # Hindi/Gujarati must never silently inherit it.
+    if code == "en":
+        legacy = _settings.get("vosk_model_path")
+        if legacy:
+            p = Path(legacy)
+            roots.append(p if p.is_absolute() else BASE_DIR / p)
+
+    roots.extend((
+        BASE_DIR / "models_local" / "vosk" / code,
+        BASE_DIR / "models" / "vosk" / code,
+    ))
+
+    names = {
+        "en": ("en", "english", "en-in"),
+        "hi": ("hi", "hindi", "hi-in"),
+        "gu": ("gu", "gujarati", "gu-in"),
+    }.get(code, (code,))
 
     for root in roots:
         try:
@@ -439,11 +476,39 @@ def _find_vosk_model() -> Optional[Path]:
                 return root
             if root.is_dir():
                 for child in sorted(root.iterdir()):
-                    if _looks_like_vosk_model(child):
+                    child_name = child.name.lower()
+                    if _looks_like_vosk_model(child) and any(
+                        re.search(rf"(?:^|[-_.]){re.escape(name)}(?:[-_.]|$)", child_name)
+                        for name in names
+                    ):
                         return child
         except OSError:
             continue
     return None
+
+
+def _get_vosk_model(lang: str):
+    code = _stt_language_code(lang)
+    if not VOSK_AVAILABLE:
+        return None
+    if code in _vosk_models:
+        return _vosk_models[code]
+
+    model_dir = _vosk_model_dirs.get(code) or _find_vosk_model(code)
+    if model_dir is None:
+        return None
+    with _vosk_lock:
+        if code in _vosk_models:
+            return _vosk_models[code]
+        try:
+            logger.info("Loading Vosk %s model from %s", code, model_dir)
+            model = VoskModel(str(model_dir))
+            _vosk_models[code] = model
+            _vosk_model_dirs[code] = model_dir
+            return model
+        except Exception as e:
+            logger.warning("Vosk %s model failed to load: %s", code, e)
+            return None
 
 
 try:
@@ -454,15 +519,15 @@ try:
     except Exception:
         pass
 
-    _vosk_model_dir = _find_vosk_model()
-    if _vosk_model_dir is not None:
-        _vosk_model = VoskModel(str(_vosk_model_dir))
-        VOSK_AVAILABLE = True
-    else:
+    VOSK_AVAILABLE = True
+    for _language in ("en", "hi", "gu"):
+        _path = _find_vosk_model(_language)
+        if _path is not None:
+            _vosk_model_dirs[_language] = _path
+    if not _vosk_model_dirs:
         logger.info(
-            "Vosk installed but no model found. Download vosk-model-small-en-in-0.4 "
-            "from https://alphacephei.com/vosk/models and extract it to "
-            f"{BASE_DIR / 'models_local' / 'vosk'}/")
+            "Vosk installed but no language model found. Configure "
+            "vosk_model_path_en, vosk_model_path_hi, or vosk_model_path_gu.")
 except ImportError:
     logger.info("Vosk not installed (pip install vosk) — offline STT unavailable.")
 except Exception as e:
@@ -477,22 +542,28 @@ if SR_AVAILABLE:
     except Exception:
         logger.info("PocketSphinx not installed — last-resort offline STT unavailable.")
 
-_ENGINE_AVAILABLE = {
-    "vosk": lambda: VOSK_AVAILABLE,
-    "google": lambda: SR_AVAILABLE,
-    "sphinx": lambda: SR_AVAILABLE and SPHINX_AVAILABLE,
-}
+def _engine_available(name: str, lang: str = "en-IN") -> bool:
+    code = _stt_language_code(lang)
+    if name == "vosk":
+        return VOSK_AVAILABLE and (
+            code in _vosk_model_dirs or _find_vosk_model(code) is not None
+        )
+    if name == "google":
+        return SR_AVAILABLE
+    if name == "sphinx":
+        return code == "en" and SR_AVAILABLE and SPHINX_AVAILABLE
+    return False
 
 
-def _active_engines() -> List[str]:
-    return [e for e in STT_ENGINES if _ENGINE_AVAILABLE.get(e, lambda: False)()]
+def _active_engines(lang: str = "en-IN") -> List[str]:
+    return [engine for engine in STT_ENGINES if _engine_available(engine, lang)]
 
 
 _ACTIVE = _active_engines()
 if not _ACTIVE:
     logger.error("NO SPEECH RECOGNITION ENGINE AVAILABLE — recordings will still be "
                  "saved to the pen drive, but nothing will be transcribed.")
-elif not (VOSK_AVAILABLE or SPHINX_AVAILABLE):
+elif not any(name in _ACTIVE for name in ("vosk", "sphinx")):
     logger.warning(f"STT engines active: {', '.join(_ACTIVE)} — all need internet.")
 else:
     logger.info(f"STT engines active: {' -> '.join(_ACTIVE)}")
@@ -1077,12 +1148,13 @@ def play_with_privacy_prompt(path: Optional[str] = None,
 
 
 # ── TRANSCRIPTION ───────────────────────────────────────────
-def _transcribe_vosk(pcm: bytes) -> Optional[str]:
-    """Offline, free, no API key. ~85-92% on clean short commands."""
-    if not VOSK_AVAILABLE or _vosk_model is None:
+def _transcribe_vosk(pcm: bytes, lang: str = "en-IN") -> Optional[str]:
+    """Offline transcription using the model for the requested language."""
+    model = _get_vosk_model(lang)
+    if model is None:
         return None
     try:
-        recognizer = KaldiRecognizer(_vosk_model, SAMPLE_RATE)
+        recognizer = KaldiRecognizer(model, SAMPLE_RATE)
         recognizer.SetWords(True)
         for i in range(0, len(pcm), 4000):
             recognizer.AcceptWaveform(pcm[i:i + 4000])
@@ -1144,10 +1216,10 @@ def _transcribe_sphinx(pcm: bytes) -> Optional[str]:
 
 def _run_engines(pcm: bytes, lang: str) -> Optional[str]:
     for name in STT_ENGINES:
-        if not _ENGINE_AVAILABLE.get(name, lambda: False)():
+        if not _engine_available(name, lang):
             continue                       # skip, rather than pretend to try
         if name == "vosk":
-            result = _transcribe_vosk(pcm)
+            result = _transcribe_vosk(pcm, lang)
         elif name == "google":
             result = _transcribe_google(pcm, lang)
         elif name == "sphinx":
@@ -1186,6 +1258,11 @@ def _transcribe(pcm: bytes, lang: str) -> Optional[str]:
     return None
 
 
+def _multi_engine_transcribe(pcm: bytes, lang: str = "en-IN") -> Optional[str]:
+    """Backward-compatible name for the language-aware engine chain."""
+    return _transcribe(pcm, lang)
+
+
 def transcribe_file(path: str, lang: str = "en-IN") -> Optional[str]:
     """Transcribe an existing mono 16-bit WAV."""
     try:
@@ -1202,7 +1279,7 @@ def transcribe_file(path: str, lang: str = "en-IN") -> Optional[str]:
     samples = _to_array(frames)
     if rate != SAMPLE_RATE:
         samples = _resample_to_16k(samples, rate)
-    return _transcribe(_to_pcm(samples), lang)
+    return _multi_engine_transcribe(_to_pcm(samples), lang)
 
 
 # ── PUBLIC ENTRY POINT ──────────────────────────────────────
@@ -1226,9 +1303,12 @@ def listen(lang: str = "en-IN", speak_fn: Optional[Callable] = None,
     if not path:
         return None
 
-    if not _active_engines():
-        _set_error("Speech recognition is not installed, "
-                   "but your recording has been saved.")
+    if not _active_engines(lang):
+        language = _stt_language_code(lang)
+        _set_error(
+            f"Speech recognition for {language} is not installed, "
+            "but your recording has been saved."
+        )
         return None
 
     text = transcribe_file(path, lang)
@@ -1267,11 +1347,16 @@ def diagnostics() -> dict:
         "pico_buttons": (_get_serial(open_if_needed=False) is not None
                          or _morse_serial_class() is not None),
         "vosk": VOSK_AVAILABLE,
-        "vosk_model": str(_vosk_model_dir) if _vosk_model_dir else None,
+        "vosk_models": {
+            language: str(path) for language, path in _vosk_model_dirs.items()
+        },
         "speech_recognition": SR_AVAILABLE,
         "sphinx": SPHINX_AVAILABLE,
         "engines_configured": list(STT_ENGINES),
-        "engines_active": _active_engines(),
+        "engines_active": {
+            language: _active_engines(f"{language}-IN")
+            for language in ("en", "hi", "gu")
+        },
         "stop_press_count": STOP_PRESS_COUNT,
         "stop_window_seconds": STOP_WINDOW_S,
         "privacy_prompt_timeout_s": PRIVACY_PROMPT_TIMEOUT_S,

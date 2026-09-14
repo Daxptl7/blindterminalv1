@@ -622,8 +622,11 @@ class RepairedDefectTests(unittest.TestCase):
         with mock.patch.dict(main._modules, {
             "translator": translator,
             "voice": mock.Mock(),
+            "privacy": SimpleNamespace(
+                ask_confidentiality=lambda _serial=None: "NORMAL"
+            ),
         }), \
-             mock.patch.object(main, "_select_with_buttons", side_effect=["3", "3"]), \
+             mock.patch.object(main, "_select_with_buttons", side_effect=["3", "2", "1"]), \
              mock.patch.object(
                  main,
                  "_listen_until_stopped",
@@ -633,7 +636,9 @@ class RepairedDefectTests(unittest.TestCase):
             main.mode_translate()
 
         self.assertEqual(listened, ["hi-IN"])
-        translator.translate_ex.assert_called_once_with("नमस्ते", from_lang="hi", to_lang="en")
+        translator.translate_ex.assert_called_once_with(
+            "नमस्ते", from_lang="hi", to_lang="en", privacy=False
+        )
 
     # ── ai_query: timeouts that did not time out ─────────────────────────
     def test_ask_ai_does_not_create_a_pool_per_call(self):
@@ -704,6 +709,9 @@ class RepairedDefectTests(unittest.TestCase):
             def wait(self, timeout=None):
                 return 0
 
+            def communicate(self, timeout=None):
+                return None, ""
+
         class FakeWave:
             def __enter__(self):
                 return self
@@ -714,34 +722,50 @@ class RepairedDefectTests(unittest.TestCase):
             def getnframes(self):
                 return 16000
 
+            def getframerate(self):
+                return 16000
+
+            def getnchannels(self):
+                return 1
+
+            def getsampwidth(self):
+                return 2
+
             def readframes(self, n):
                 return b"\x00\x01" * n
 
         fake_stdin = mock.Mock()
         fake_stdin.isatty.return_value = False   # headless: no terminal
 
+        def save_recording(path, _pcm, rate=16000):
+            captured["saved_path"] = path
+            return True
+
         with mock.patch.object(voice, "VAD_AVAILABLE", False), \
              mock.patch.object(voice, "RECORDING_DIR", tmpdir), \
              mock.patch.object(voice.shutil, "which", return_value="/usr/bin/arecord"), \
              mock.patch("subprocess.Popen", FakeProc), \
+             mock.patch.object(voice.os.path, "getsize", return_value=32044), \
              mock.patch.object(voice.wave, "open", return_value=FakeWave()), \
+             mock.patch.object(voice, "_write_wav", side_effect=save_recording), \
              mock.patch.object(voice, "_multi_engine_transcribe", return_value="hello there"), \
              mock.patch.object(voice.sys, "stdin", fake_stdin), \
              mock.patch.object(builtins, "input",
                                side_effect=AssertionError("listen() must not require a keypress")):
             result = voice.listen("en-IN")
 
-        return result, captured["cmd"]
+        return result, captured
 
     def test_voice_listen_is_hands_free(self):
         """listen() used to call input('press ENTER to stop') and could not
         return without a keypress — fatal on a keyboard-less device."""
         with tempfile.TemporaryDirectory() as tmp:
-            result, cmd = self._run_listen_headless(tmp)
+            result, captured = self._run_listen_headless(tmp)
 
         self.assertEqual(result, "hello there")
         # The recording must be self-terminating (-d <seconds>).
-        self.assertIn("-d", cmd, "recording must have its own duration limit")
+        self.assertIn("-d", captured["cmd"],
+                      "recording must have its own duration limit")
 
     def test_voice_recording_target_is_configurable(self):
         """Device and output path were hardcoded to one developer's machine
@@ -749,18 +773,18 @@ class RepairedDefectTests(unittest.TestCase):
         from modules import voice
 
         with tempfile.TemporaryDirectory() as tmp:
-            _, cmd = self._run_listen_headless(tmp)
+            _, captured = self._run_listen_headless(tmp)
 
-        self.assertIn(voice.MIC_DEVICE, cmd)
-        self.assertTrue(any(str(tmp) in str(part) for part in cmd),
-                        "recordings must go to the configured directory")
+        self.assertIn(voice.MIC_DEVICE, captured["cmd"])
+        self.assertTrue(str(captured["saved_path"]).startswith(str(tmp)),
+                        "final recordings must go to the configured directory")
 
-    def test_vad_capture_uses_configured_mic_index(self):
+    def test_legacy_vad_entry_point_delegates_to_current_capture(self):
         import inspect
         from modules import voice
 
         source = inspect.getsource(voice.listen_with_vad)
-        self.assertIn("input_device_index=MIC_INDEX", source)
+        self.assertIn("return listen(lang, speak_fn)", source)
 
     def test_bandpass_filter_preserves_length_and_silence(self):
         import numpy as np

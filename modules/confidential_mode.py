@@ -25,6 +25,7 @@ FIXES IN THIS VERSION
 """
 
 import logging
+import re
 import time
 
 from modules.config_loader import load_settings
@@ -159,6 +160,94 @@ def speak_with_privacy_check(text, lang_code, morse_serial=None):
     else:
         enable_speaker()
         tts.speak(text, lang_code, block=True)
+    return mode
+
+
+def split_text_for_speech(text, max_chars=600):
+    """Split a document into complete, sentence-aware TTS chunks.
+
+    Long OCR results should not be sent to a speech engine as one enormous
+    utterance: synthesis can time out and the user may hear nothing.  This
+    splitter prefers paragraph and sentence boundaries, then word boundaries,
+    while retaining every word in the recognized document.
+    """
+    try:
+        limit = max(80, int(max_chars))
+    except (TypeError, ValueError):
+        limit = 600
+
+    normalized = re.sub(r"[ \t]+", " ", str(text or "")).strip()
+    if not normalized:
+        return []
+
+    paragraphs = [
+        re.sub(r"\s+", " ", paragraph).strip()
+        for paragraph in re.split(r"\n\s*\n", normalized)
+        if paragraph.strip()
+    ]
+    chunks = []
+
+    def append_piece(piece):
+        piece = piece.strip()
+        while len(piece) > limit:
+            cut = piece.rfind(" ", 0, limit + 1)
+            if cut <= 0:
+                cut = limit
+            chunks.append(piece[:cut].strip())
+            piece = piece[cut:].strip()
+        if piece:
+            chunks.append(piece)
+
+    for paragraph in paragraphs:
+        sentences = re.split(r"(?<=[.!?\u0964])\s+", paragraph)
+        current = ""
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            candidate = f"{current} {sentence}".strip()
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+                current = ""
+            if len(sentence) > limit:
+                append_piece(sentence)
+            else:
+                current = sentence
+        if current:
+            chunks.append(current)
+
+    return chunks
+
+
+def speak_document_with_privacy_check(
+    text,
+    lang_code,
+    morse_serial=None,
+    chunk_chars=600,
+):
+    """Read a complete OCR document on one privacy route.
+
+    The privacy question is asked once.  Every chunk is then spoken on the
+    selected output before that route is released.
+    """
+    chunks = split_text_for_speech(text, max_chars=chunk_chars)
+    if not chunks:
+        return None
+
+    mode = ask_confidentiality(morse_serial)
+    if mode == "PRIVATE":
+        with PrivateAudio():
+            for index, chunk in enumerate(chunks):
+                prefix = "I found. " if index == 0 else ""
+                tts.speak(prefix + chunk, lang_code, block=True)
+    else:
+        enable_speaker()
+        for index, chunk in enumerate(chunks):
+            prefix = "I found. " if index == 0 else ""
+            tts.speak(prefix + chunk, lang_code, block=True)
     return mode
 
 

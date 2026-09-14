@@ -21,8 +21,8 @@ systemd unit or a deployment script.
 import argparse
 import json
 import shutil
-import subprocess
 import sys
+import wave
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -86,8 +86,10 @@ def check_audio_output(settings):
     check("tts module imports", True)
 
     available = tts._AVAILABLE_OUTPUTS
-    check("ALSA playback devices found", bool(available), ", ".join(available) or "none",
-          "check `aplay -l`; is the USB sound card plugged in?")
+    on_pi = Path("/proc/device-tree/model").exists()
+    check("ALSA playback devices found", bool(available) or None,
+          ", ".join(available) or "none (normal on a laptop without ALSA)",
+          "check `aplay -l`; is the USB sound card plugged in?", required=on_pi)
 
     for role, configured in (("speaker_device", settings.get("speaker_device")),
                              ("earphone_device",
@@ -127,50 +129,53 @@ def check_voice(record_seconds=0):
 
     diag = voice.diagnostics()
 
-    check("arecord available", diag["arecord"], "",
-          "sudo apt install alsa-utils")
-    check("Microphone hardware detected", bool(diag["capture_devices"]),
-          ", ".join(diag["capture_devices"]) or "none",
-          "check `arecord -l`; is the USB microphone plugged in?")
+    on_pi = Path("/proc/device-tree/model").exists()
+    check("arecord capture program", diag["arecord"] or None,
+          "required on Raspberry Pi" if not diag["arecord"] else "available",
+          "sudo apt install alsa-utils", required=on_pi)
+    check("Microphone route configured", bool(diag["mic_device"]),
+          str(diag["mic_device"] or "none"),
+          "set mic_device in config/settings.json")
 
-    active = diag["engines_active"]
-    check("Speech recognition engine available", bool(active),
-          " -> ".join(active) or "NONE",
-          "pip install vosk  and download a model (see README)")
-
-    check("Works without internet", diag["offline_capable"] or None,
-          f"vosk={diag['vosk']} sphinx={diag['sphinx']}",
-          "pip install vosk, then extract a model to models_local/vosk/",
-          required=False)
-
-    check("VAD (stops when you stop talking)", diag["vad"] and diag["pyaudio"] or None,
-          f"webrtcvad={diag['vad']} pyaudio={diag['pyaudio']}",
-          "pip install webrtcvad-wheels PyAudio", required=False)
+    active_by_language = diag["engines_active"]
+    for code, name in (("en", "English"), ("hi", "Hindi"), ("gu", "Gujarati")):
+        active = active_by_language.get(code, [])
+        check(f"{name} speech recognition", bool(active),
+              " -> ".join(active) or "NONE",
+              f"install a {name} Vosk model at models_local/vosk/{code}")
+        # PocketSphinx is only an emergency English fallback and is not close
+        # enough to the product accuracy target to count as offline-ready.
+        offline = "vosk" in active
+        check(f"{name} works without internet", offline or None,
+              diag.get("vosk_models", {}).get(code, "no language model"),
+              f"install a {name} Vosk model at models_local/vosk/{code}",
+              required=False)
 
     check("Recordings directory writable", bool(diag["recording_dir"]),
           diag["recording_dir"] or "none",
           "check that data/ is mounted, or set voice_recording_dir", required=False)
 
     if record_seconds:
-        print(f"\n  Recording {record_seconds}s from the microphone — please speak…")
-        pcm, error = voice._capture_arecord(record_seconds)
-        if not pcm:
-            hint = "try a different card: set mic_device in settings.json"
-            if "hum" in (error or "").lower():
-                # Every capture card returned stationary mains hum, i.e. no
-                # capsule is connected to any of them (or nobody spoke).
-                hint = "run `python3 mic_check.py` to find which card the microphone is on"
-            check("Live microphone capture", False, error or "no audio", hint)
+        print(f"\n  Recording up to {record_seconds}s from the microphone — please speak…")
+        path = voice.record(max_seconds=record_seconds, speak_fn=print)
+        if not path:
+            check("Live microphone capture", False, voice.get_last_error() or "no audio",
+                  "check arecord -l and set mic_device in settings.json",
+                  required=on_pi)
         else:
-            level = voice._dbfs(voice._to_array(pcm))
-            # Below about -45 dBFS is too quiet for any recogniser to work with.
-            check("Live microphone capture", level > -45 or None,
-                  f"{level:.0f} dBFS on {voice._capture_device_cache}",
-                  "raise the capture level: alsamixer -c <card>, then F4 and raise Mic")
-            text = voice._transcribe(pcm, "en-IN")
-            check("Live transcription", bool(text), f"heard: {text!r}",
-                  "speak louder/closer, or check the internet if only Google is active",
-                  required=False)
+            try:
+                with wave.open(path, "rb") as recorded:
+                    pcm = recorded.readframes(recorded.getnframes())
+                level = voice._dbfs(voice._to_array(pcm))
+                check("Live microphone capture", level > -45 or None,
+                      f"{level:.0f} dBFS on {diag['mic_device']}",
+                      "raise the capture level with alsamixer")
+                text = voice.transcribe_file(path, "en-IN")
+                check("Live transcription", bool(text), f"heard: {text!r}",
+                      "speak closer or install/check the configured STT engine",
+                      required=False)
+            except Exception as e:
+                check("Live microphone capture", False, str(e), required=on_pi)
 
 
 # ── HARDWARE ────────────────────────────────────────────────
@@ -198,6 +203,47 @@ def check_hardware(settings):
               f"yolo_model_path={model!r} does not exist", required=False)
     except Exception as e:
         check("Object detection module", None, str(e), required=False)
+
+
+# ── LOCAL LANGUAGE TRANSLATION ─────────────────────────────
+def check_translation():
+    section("Translation (English, Hindi, Gujarati)")
+    try:
+        from modules import translator
+    except Exception as e:
+        check("translator module imports", False, str(e))
+        return
+    check("translator module imports", True)
+
+    try:
+        info = translator.diagnostics()
+    except Exception as e:
+        check("translation diagnostics", False, str(e))
+        return
+
+    pairs = info.get("supported_pairs", [])
+    check("All six translation directions exposed", len(pairs) == 6,
+          ", ".join(pairs), "restore en/hi/gu source and target selection")
+
+    bundles = info.get("indictrans2", {}).get("bundles", {})
+    for bundle, label in (("en-indic", "English to Hindi/Gujarati"),
+                          ("indic-en", "Hindi/Gujarati to English"),
+                          ("indic-indic", "Hindi to/from Gujarati")):
+        state = bundles.get(bundle, {})
+        check(f"Offline model: {label}", state.get("available") or None,
+              state.get("configured", "not configured"),
+              "install the local IndicTrans2 bundle; see docs/TRANSLATION_SETUP.md",
+              required=False)
+
+    if info.get("libre_url"):
+        check("LibreTranslate privacy classification",
+              info.get("libre_trusted_local") or None,
+              str(info["libre_url"]),
+              "set libretranslate_trusted_local=true only for a trusted local server",
+              required=False)
+
+    check("Versioned validated translation cache", info.get("cache_schema") == 2,
+          f"schema={info.get('cache_schema')}, entries={info.get('cache_entries')}")
 
 
 # ── SUMMARY ─────────────────────────────────────────────────
@@ -249,6 +295,7 @@ def main():
     settings = check_config()
     check_audio_output(settings)
     check_voice(record_seconds=3 if args.mic else 0)
+    check_translation()
     check_hardware(settings)
     return summarize(args.speak)
 

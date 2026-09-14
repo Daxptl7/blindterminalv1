@@ -1,0 +1,6 @@
+{"id":"en-hi-smoke","src":"en","dest":"hi","source":"hello","references":["नमस्ते"],"human_adequate":true}
+{"id":"en-gu-smoke","src":"en","dest":"gu","source":"hello","references":["નમસ્તે"],"human_adequate":true}
+{"id":"hi-en-smoke","src":"hi","dest":"en","source":"नमस्ते","references":["hello"],"human_adequate":true}
+{"id":"hi-gu-smoke","src":"hi","dest":"gu","source":"नमस्ते","references":["નમસ્તે"],"human_adequate":true}
+{"id":"gu-en-smoke","src":"gu","dest":"en","source":"નમસ્તે","references":["hello"],"human_adequate":true}
+{"id":"gu-hi-smoke","src":"gu","dest":"hi","source":"નમસ્તે","references":["नमस्ते"],"human_adequate":true}

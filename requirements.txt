@@ -100,7 +100,7 @@ logfire>=2.0.0
 #   pip install scikit-learn>=1.5.0      # emotion engine
 #   pip install llama-cpp-python>=0.2.90 # offline LLM fallback
 #   pip install surya-ocr                # high-accuracy OCR (slow on a Pi)
-#   pip install argostranslate           # Mode 4 offline translation, see below
+#   pip install argostranslate           # optional extra translation fallback
 #
 # System packages (not pip):
 #   Tesseract OCR — macOS: brew install tesseract
@@ -112,15 +112,9 @@ logfire>=2.0.0
 #                          translation can be produced offline but not spoken.
 #
 # ── Offline translation (Mode 4 without internet) ───────────
-# The translator falls back through cache → Argos → phrasebook when the
-# network is down. The phrasebook is built in and covers common classroom
-# words only; for full sentences install Argos and its language pairs:
-#
-#   pip install argostranslate
-#   python3 -c "import argostranslate.package as p; p.update_package_index(); \
-#       [p.install_from_path(q.download()) for q in p.get_available_packages() \
-#        if (q.from_code, q.to_code) in (('en','hi'), ('hi','en'))]"
-#
-# Argos has no Gujarati pair at present. For offline Gujarati, run a
-# LibreTranslate server on the Pi or the classroom LAN and point
-# settings.json's "libretranslate_url" at it.
+# High-quality English/Hindi/Gujarati translation is optional because its ML
+# runtime and model weights are large. Install requirements-translation.txt,
+# then provision the three local IndicTrans2 bundles described in
+# docs/TRANSLATION_SETUP.md. Argos and a trusted local LibreTranslate server
+# remain optional fallbacks; the built-in phrasebook is only an emergency set
+# of common exact phrases and is not a general translator.

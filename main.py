@@ -384,7 +384,7 @@ def mode_ocr_scan():
         # chose. This block replaces both the broken privacy call and the
         # broken "explain this?" response listener.
         #
-        # speak_with_privacy_check() does three things atomically:
+        # speak_document_with_privacy_check() does three things atomically:
         #   1. Asks "confidential or normal?" through the earphone only
         #   2. Waits for Button 1 (private) or Button 2 (speaker) — with an
         #      8-second microphone fallback that accepts "yes"/"no"
@@ -395,10 +395,18 @@ def mode_ocr_scan():
             # Safely resolve the morse serial handle -- supports both variable
             # names used across different versions of this file.
             _ms_ref = _morse_serial_singleton  # always defined at module level
-            _cm.speak_with_privacy_check(f"I found: {text[:150]}", "eng", _ms_ref)
+            _cm.speak_document_with_privacy_check(text, "eng", _ms_ref)
         except Exception as e:
-            print(f"\n[DEBUG] Privacy block failed: {e}\n")
-            _speak(f"I found: {text[:150]}")
+            # Never leak recognized document text to the public speaker when
+            # privacy routing fails.  The user can safely retry after checking
+            # the earphones/audio devices.
+            logger.error(f"OCR privacy reader failed: {e}")
+            _speak(
+                "I read the page, but private audio routing is unavailable. "
+                "The document was not spoken. Please check the audio devices "
+                "and try again."
+            )
+            return
 
         logger.info(f"OCR: {text[:200]}")
 
@@ -724,12 +732,12 @@ def mode_translate():
 
     Step 1 — ask HOW text will be entered  (1=type  2=Morse buttons  3=voice)
     Step 2 — get the text using that method
-    Step 3 — ask WHICH direction to translate (EN→HI / EN→GU / HI→EN / GU→EN)
+    Step 3 — choose source and target from English, Hindi and Gujarati
     Step 4 — translate and speak the result
 
-    Both menus are answered with the three physical buttons only. Step 3 has
-    four options and there are three buttons, so Gujarati to English is a
-    double press of Button 2 — see _button_choice().
+    Both menus are answered with the three physical buttons only. Source and
+    target are separate choices, so all six directions are reachable without
+    timing-sensitive double presses.
     """
     logger.info("Mode 4: Translate")
 
@@ -755,39 +763,47 @@ def mode_translate():
         _speak("No button was pressed. Translation cancelled.")
         return
 
-    pairs = {
-        "1": ("en", "hi"),
-        "2": ("en", "gu"),
-        "3": ("hi", "en"),
-        "22": ("gu", "en"),
+    languages = {
+        "1": ("en", "English"),
+        "2": ("hi", "Hindi"),
+        "3": ("gu", "Gujarati"),
     }
-    direction_labels = {
-        "1": "English to Hindi",
-        "2": "English to Gujarati",
-        "3": "Hindi to English",
-        "22": "Gujarati to English",
-    }
+    language_names = {code: name for code, name in languages.values()}
     speech_langs = {
         "en": "en-IN",
         "hi": "hi-IN",
         "gu": "gu-IN",
     }
 
-    def _choose_translation_direction() -> str | None:
-        print("\n  Button 1        → English  → Hindi")
-        print("  Button 2        → English  → Gujarati")
-        print("  Button 3        → Hindi    → English")
-        print("  Button 2 twice  → Gujarati → English")
-
-        return _select_with_buttons(
+    def _choose_translation_direction() -> tuple[str, str] | None:
+        print("\n  Source language: 1=English, 2=Hindi, 3=Gujarati")
+        source_choice = _select_with_buttons(
             ("1", "2", "3"),
-            "Which translation do you want? "
-            "Press button 1 for English to Hindi. "
-            "Press button 2 for English to Gujarati. "
-            "Press button 3 for Hindi to English. "
-            "Press button 2 twice for Gujarati to English.",
-            double="2"
+            "Choose the source language. Press button 1 for English, "
+            "button 2 for Hindi, or button 3 for Gujarati."
         )
+        if source_choice not in languages:
+            return None
+
+        src, source_name = languages[source_choice]
+        _speak(f"Source language: {source_name}.", block=True)
+        print("  Target language: 1=English, 2=Hindi, 3=Gujarati")
+        target_choice = _select_with_buttons(
+            ("1", "2", "3"),
+            "Choose the target language. Press button 1 for English, "
+            "button 2 for Hindi, or button 3 for Gujarati."
+        )
+        if target_choice not in languages:
+            return None
+
+        dest, target_name = languages[target_choice]
+        if src == dest:
+            _speak(
+                "Source and target cannot be the same. Translation cancelled."
+            )
+            return None
+        _speak(f"Target language: {target_name}.", block=True)
+        return src, dest
 
     # ── STEP 2: Get the source text ───────────────────────────────────────
     text = None
@@ -859,8 +875,10 @@ def mode_translate():
             _speak("Could not decode the Morse input. Please try again.")
             return
 
-        _speak(f"I decoded: {text}")
-        logger.info(f"Translate — Morse decoded to: {text}")
+        # Do not read the captured text over the public speaker before the
+        # user has chosen a privacy route. The decoded content may be private.
+        _speak("Morse text decoded.")
+        logger.info("Translate — Morse input decoded successfully.")
 
     elif input_choice == "3":
         # ── Voice / microphone ──
@@ -873,17 +891,19 @@ def mode_translate():
         # Hindi/Gujarati speech could be recorded cleanly and still transcribe
         # as nonsense.
         direction_choice = _choose_translation_direction()
-        if direction_choice not in pairs:
+        if direction_choice is None:
             _speak("No valid direction selected. Translation cancelled.")
             return
 
-        src, _dest = pairs[direction_choice]
+        src, _dest = direction_choice
         listen_lang = speech_langs.get(src, "en-IN")
         text = _listen_until_stopped(listen_lang, prompt="Speak your text now.")
         if not text:
             _speak_voice_failure("I did not catch anything. Please try again.")
             return
-        _speak(f"I heard: {text}")
+        # The privacy choice happens below. Echoing the recognised sentence
+        # here could expose confidential text through the main speaker.
+        _speak("Voice input captured.")
 
     # Reaching here means text is valid
     if not text:
@@ -891,22 +911,48 @@ def mode_translate():
         return
 
     # ── STEP 3: Choose translation direction ──────────────────────────────
-    # Four directions, three buttons: the fourth is a double press of Button 2.
     if direction_choice is None:
         direction_choice = _choose_translation_direction()
 
-    if direction_choice not in pairs:
+    if direction_choice is None:
         _speak("No valid direction selected. Translation cancelled.")
         return
 
-    src, dest = pairs[direction_choice]
-    label    = direction_labels[direction_choice]
+    src, dest = direction_choice
+    if input_choice == "2" and src != "en":
+        _speak(
+            "Morse input currently supports English source text only. "
+            "Please select English as the source or use voice input."
+        )
+        return
+    label = f"{language_names[src]} to {language_names[dest]}"
+
+    # Ask before any source text leaves the device. A private translation may
+    # use only local providers and must neither read nor write the persistent
+    # translation cache. If Confidential Mode is unavailable, the established
+    # public behaviour remains available rather than silently claiming privacy.
+    private_translation = False
+    if _has("privacy"):
+        try:
+            privacy_choice = _modules["privacy"].ask_confidentiality(
+                _morse_serial_singleton
+            )
+            private_translation = privacy_choice == "PRIVATE"
+        except Exception as e:
+            logger.error(f"Translation privacy selection failed: {e}")
+            _speak("Privacy selection failed. Translation cancelled for safety.")
+            return
 
     # ── STEP 4: Translate and speak ───────────────────────────────────────
     _speak(f"Translating. {label}.")
     translator = _modules["translator"]
     try:
-        result = translator.translate_ex(text, from_lang=src, to_lang=dest)
+        result = translator.translate_ex(
+            text,
+            from_lang=src,
+            to_lang=dest,
+            privacy=private_translation,
+        )
     except Exception as e:
         logger.error(f"Translation error: {e}")
         _speak("Translation failed. Please try again.")
@@ -925,24 +971,50 @@ def mode_translate():
     tts_lang = translator.LANG_TO_TTS.get(result.lang, "eng")
 
     if result.translated:
-        _speak("Translation.", block=True)
-        _speak(result.text, lang=tts_lang, block=True)
-        print(f"\n  {label}: {result.text}\n")
-        logger.info(
-            f"Translated [{src}→{dest}] via {result.source}: "
-            f"{text[:80]} → {result.text[:80]}")
+        if private_translation:
+            try:
+                with _modules["privacy"].PrivateAudio():
+                    _speak("Private translation.", block=True)
+                    _speak(result.text, lang=tts_lang, block=True)
+            except Exception as e:
+                # Fail closed: never move private content to the speaker when
+                # the private output route cannot be established.
+                logger.error(f"Private translation playback failed: {e}")
+                _speak("Private audio is unavailable. The result was not spoken.")
+                return
+            print("\n  [private translation completed; text hidden]\n")
+            logger.info(
+                f"Private translation [{src}→{dest}] completed via "
+                f"{result.source} ({len(text)} source characters)."
+            )
+        else:
+            _speak("Translation.", block=True)
+            _speak(result.text, lang=tts_lang, block=True)
+            print(f"\n  {label}: {result.text}\n")
+            logger.info(
+                f"Translated [{src}→{dest}] via {result.source}: "
+                f"{text[:80]} → {result.text[:80]}")
     else:
         # Nothing was translated. Say why, then read back what the user gave
         # us so the session still ends with something useful rather than a
         # dead end.
-        if not translator.is_online():
+        if private_translation:
+            _speak(
+                "A private local translation was not available. "
+                "Your text was not sent to an online service.",
+                block=True,
+            )
+        elif not translator.is_online():
             _speak("I could not translate that because there is no internet "
                    "connection. Here is your original text.", block=True)
         else:
             _speak("The translation service did not respond. "
                    "Here is your original text.", block=True)
-        _speak(result.text, lang=translator.LANG_TO_TTS.get(src, "eng"), block=True)
-        print(f"\n  [not translated — {result.error}]  {result.text}\n")
+        if not private_translation:
+            _speak(result.text, lang=translator.LANG_TO_TTS.get(src, "eng"), block=True)
+            print(f"\n  [not translated — {result.error}]  {result.text}\n")
+        else:
+            print("\n  [private translation unavailable; text hidden]\n")
         logger.warning(f"Translation unavailable [{src}→{dest}]: {result.error}")
 
 

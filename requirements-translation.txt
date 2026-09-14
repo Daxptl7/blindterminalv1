@@ -1,0 +1,9 @@
+# Optional high-quality offline translation runtime.
+# Install this on the laptop first. Keep it separate from requirements.txt
+# because Torch/model wheels are large and Raspberry Pi compatibility must be
+# validated before they are added to the device image.
+torch>=2.5
+transformers>=4.51,<5
+sentencepiece>=0.2
+sacremoses>=0.1
+indictranstoolkit>=1.1

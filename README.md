@@ -35,7 +35,8 @@ Blind-Assist/
     │   ├── morse.py                   # Tactile Morse code input decoder
     │   ├── object_detection.py        # Real-time YOLOv8 obstacle & item detection
     │   ├── ocr.py                     # OpenCV & Tesseract OCR camera scanner
-    │   ├── translator.py              # Multi-language translation engine
+    │   ├── translator.py              # Validated offline-first translation chain
+    │   ├── indictrans2_engine.py      # Lazy local IndicTrans2 adapter
     │   ├── tts.py                     # Non-blocking pyttsx3 Text-to-Speech engine
     │   └── voice.py                   # SpeechRecognition microphone listener
     └── services/                      # Research-Grade RAG Architecture
@@ -137,7 +138,10 @@ BlindAssist follows a **Star Topology** for software decoupling:
 1. **Python 3.10+** (tested on Python 3.13)
 2. **Tesseract OCR Engine**:
    - macOS: `brew install tesseract`
-   - Linux: `sudo apt install tesseract-ocr`
+   - Raspberry Pi/Linux: `sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin tesseract-ocr-guj`
+   - For product validation and release thresholds, see [OCR validation](docs/OCR_VALIDATION.md).
+   - For all six local-language directions, see [translation setup](docs/TRANSLATION_SETUP.md)
+     and the [95% validation gate](docs/TRANSLATION_VALIDATION.md).
 
 ### 💻 Installation
 
