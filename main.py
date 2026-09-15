@@ -97,6 +97,7 @@ _safe_import("ai_query", "ai_query")
 _safe_import("morse", "morse")
 _safe_import("ocr", "ocr")
 _safe_import("translator", "translator")
+_safe_import("math_solver", "mathsolver")
 
 # Optional modules (app works fine without)
 _safe_import("gesture_control", "gesture")
@@ -1025,8 +1026,18 @@ def mode_translate():
 # presses, and the pose under the shutter is the one that counts. A button
 # press cannot be misread.
 _GESTURE_ACTIONS = {
-    "MODE_SCAN":  "O C R scan",
-    "MODE_VOICE": "voice question",
+    "MODE_SCAN":     "O C R scan",
+    "MODE_VOICE":    "voice question",
+    "OBJECT_DETECT": "object detection",
+    "GPS_CHECK":     "G P S",
+}
+_GESTURE_GUIDANCE = {
+    "NO_HAND": "I cannot see a hand. Put your full hand in front of the camera.",
+    "HAND_CROPPED": "Part of your hand is outside the picture. Move it toward the centre.",
+    "MOVE_CLOSER": "Your hand is too far away. Move it closer to the camera.",
+    "MOVE_LEFT": "Move your hand a little to your left.",
+    "MOVE_RIGHT": "Move your hand a little to your right.",
+    "READY": "I can see your hand, but the pose is not clear. Hold it still.",
 }
 _GESTURE_MAX_S = float(_settings.get("gesture_max_seconds", 180.0))
 
@@ -1045,27 +1056,39 @@ def mode_gesture():
         return
 
     buttons = _morse_serial_singleton is not None
+    if not buttons and not _STDIN_IS_TTY:
+        _speak("Gesture mode needs the Pico buttons or an attached keyboard.")
+        return
     if buttons:
-        _speak("Gesture mode. Hold your hand in front of the wired camera. "
-               "Open palm for O C R scan, or two fingers for a voice question. "
+        _speak("Gesture mode. Open palm for O C R, two fingers for voice, "
+               "one finger for object detection, three fingers for G P S, "
+               "or a closed fist to leave. "
                "Hold the shape, then press button 1 to use it. "
                "Press button 2 to hear what I can see. "
                "Press button 3 to leave gesture mode.", block=True)
+        _drain_button_messages()
     else:
-        _speak("Gesture mode. Hold your hand in front of the wired camera. "
-               "Open palm for O C R scan, or two fingers for a voice question. "
+        _speak("Gesture mode. Open palm for O C R, two fingers for voice, "
+               "one finger for object detection, three fingers for G P S, "
+               "or a closed fist to leave. "
                "Press Enter to use the shape you are holding, "
                "type 2 to hear what I can see, or type 3 to leave.", block=True)
 
     active_action = None
     camera_failed = False
+    startup_failure = None
 
     def on_gesture(name):
         """Reports from the detector. Returning False releases the camera."""
-        nonlocal active_action, camera_failed
+        nonlocal active_action, camera_failed, startup_failure
 
         if name == "CAMERA_UNAVAILABLE":
             camera_failed = True
+            return False
+        if name in {"MEDIAPIPE_UNAVAILABLE", "HAND_MODEL_MISSING",
+                    "BACKEND_UNAVAILABLE",
+                    "FRAME_READ_FAILED"}:
+            startup_failure = name
             return False
 
         # Button 2 — say what is in view without acting on it. A sighted user
@@ -1083,17 +1106,31 @@ def mode_gesture():
                        "which is not one of the modes.")
             return True
 
-        if name == "NO_GESTURE":
-            _speak("I could not read a hand shape. Hold it still, "
-                   "and try the shutter again.")
+        if name.startswith("PREVIEW_GUIDANCE:"):
+            guidance = name.split(":", 1)[1]
+            _speak(_GESTURE_GUIDANCE.get(
+                guidance, "I cannot read the hand position yet."
+            ))
             return True
+
+        if name.startswith("NO_GESTURE"):
+            guidance = name.split(":", 1)[1] if ":" in name else "READY"
+            _speak(_GESTURE_GUIDANCE.get(
+                guidance,
+                "I could not read the hand shape. Hold it still and try again."
+            ))
+            return True
+
+        if name == "STOP":
+            active_action = "STOP"
+            return False
 
         if name in _GESTURE_ACTIONS:
             active_action = name
             return False          # leave the loop so the camera is released
 
-        _speak(f"That was {_gesture_label(name)}, which is not a mode. "
-               "Show an open palm, or two fingers.")
+        _speak("That pose is not assigned. Use one, two, three, or four open "
+               "fingers, or a closed fist.")
         return True
 
     running = True
@@ -1169,18 +1206,44 @@ def mode_gesture():
             watcher.join(timeout=1.5)
 
         if camera_failed:
-            _speak("I cannot see the wired camera. Please check that it is "
-                   "plugged in, then try gesture mode again.")
+            _speak("I cannot read the gesture camera. Check the USB camera or "
+                   "Camera Module 3, then try again.")
+            return
+
+        if startup_failure:
+            if startup_failure == "MEDIAPIPE_UNAVAILABLE":
+                _speak("Gesture control needs MediaPipe, but it is not installed.")
+            elif startup_failure == "HAND_MODEL_MISSING":
+                _speak("The gesture hand model is not installed. Run the gesture "
+                       "preparation script, then try again.")
+            elif startup_failure == "BACKEND_UNAVAILABLE":
+                _speak("No compatible MediaPipe hand model is available.")
+            else:
+                _speak("The gesture camera stopped returning images.")
+            return
+
+        if active_action == "STOP":
+            _speak("Leaving gesture mode.")
             return
 
         if active_action in _GESTURE_ACTIONS:
             action = active_action
             active_action = None
             _speak(f"Starting {_GESTURE_ACTIONS[action]}.")
-            {"MODE_SCAN": mode_ocr_scan, "MODE_VOICE": mode_voice_ask}[action]()
+            {
+                "MODE_SCAN": mode_ocr_scan,
+                "MODE_VOICE": mode_voice_ask,
+                "OBJECT_DETECT": mode_object_detection,
+                "GPS_CHECK": mode_gps,
+            }[action]()
             _speak("Back in gesture mode.")
         else:
             running = False
+
+def _object_detection_stop_requested(pressed) -> bool:
+    """Only the dedicated cancel button may stop a running detector."""
+    return pressed is not None and str(pressed) == "3"
+
 
 def mode_object_detection():
     """Mode 6: Object detection"""
@@ -1195,28 +1258,49 @@ def mode_object_detection():
     # false on the headless production device, so the loop never checked for it.
     # With no max_frames and no stop signal, entering this mode trapped the
     # device until Ctrl+C killed the whole application. There is now a real
-    # stop signal: Button 3 (or any button) on the Pico W, Enter on a keyboard,
+    # stop signal: Button 3 on the Pico W, Enter on a keyboard,
     # or an automatic time limit.
-    if _morse_serial_singleton is not None:
-        _speak("Starting object detection. Press any button to stop.")
-    else:
-        _speak("Starting object detection. Press Enter to stop.")
+    _speak("Preparing object detection.", block=True)
+    try:
+        prepare = getattr(_modules["objdetect"], "prepare_model", None)
+        if prepare is not None:
+            prepare()
+    except Exception as e:
+        logger.error(f"Object detection setup error: {e}")
+        code = getattr(e, "code", "")
+        if code == "MODEL_MISSING":
+            _speak("The object detection model is not installed. Please run the "
+                   "object detection preparation script while online.", block=True)
+        else:
+            _speak("The object detection model could not be loaded.", block=True)
+        return
 
-    from collections import Counter
+    if _morse_serial_singleton is not None:
+        _speak("Object detection is ready. Press button 3 to stop.", block=True)
+        # Mode selection and model-loading traffic must never stop a newly
+        # started detector. Only events arriving after this drain count.
+        _drain_button_messages()
+    else:
+        _speak("Object detection is ready. Press Enter to stop.", block=True)
+
     import time
 
     last_speak_time = 0
-    last_detected_classes = set()
+    last_spoken_text = None
     stop_detection = threading.Event()
     max_seconds = float(_settings.get("object_detection_max_seconds", 120))
     started_at = time.time()
 
     def _watch_for_stop():
-        """Background: set the stop flag on a button press or Enter key."""
+        """Background: Button 3/Enter stops; other buttons are ignored."""
         while not stop_detection.is_set():
+            if time.time() - started_at > max_seconds:
+                stop_detection.set()
+                return
             if _morse_serial_singleton is not None:
                 try:
-                    if _morse_serial_singleton.wait_for_raw_button(timeout=0.5) is not None:
+                    pressed = _morse_serial_singleton.wait_for_raw_button(timeout=0.5)
+                    if _object_detection_stop_requested(pressed):
                         stop_detection.set()
                         return
                     continue
@@ -1234,21 +1318,15 @@ def mode_object_detection():
     threading.Thread(target=_watch_for_stop, daemon=True).start()
 
     def detection_callback(text, detections):
-        nonlocal last_speak_time, last_detected_classes
+        nonlocal last_speak_time, last_spoken_text
         now = time.time()
-        current_classes = {d['name'] for d in detections}
-
-        # Detect if any new object types entered the camera view
-        new_objects = current_classes - last_detected_classes
-
-        # Speak only if 3.5s passed OR a new object type is detected
-        if (now - last_speak_time > 3.5 and current_classes) or new_objects:
-            if current_classes:
-                counts = Counter([d['name'] for d in detections])
-                items = [f"{count} {name}" + ("s" if count > 1 else "") for name, count in counts.items()]
-                _speak(f"I see {', '.join(items)}")
+        # The detector has already applied multi-frame stability and selected a
+        # short spatial description. Announce a changed scene immediately and
+        # repeat an unchanged scene only occasionally.
+        if detections and (text != last_spoken_text or now - last_speak_time > 5.0):
+            _speak(text)
             last_speak_time = now
-            last_detected_classes = current_classes
+            last_spoken_text = text
 
         # Hard time limit so the mode can never run away, even if every
         # interactive stop path is unavailable.
@@ -1263,7 +1341,13 @@ def mode_object_detection():
         )
     except Exception as e:
         logger.error(f"Object detection error: {e}")
-        _speak("Object detection error.")
+        code = getattr(e, "code", "")
+        if (code in {"CAMERA_READ_FAILED", "CAMERA_UNAVAILABLE"}
+                or "camera" in str(e).lower()):
+            _speak("I cannot read the object detection camera. Check the camera "
+                   "connection and try again.")
+        else:
+            _speak("Object detection stopped because of an error.")
     finally:
         stop_detection.set()
         _speak("Object detection stopped.")
@@ -1477,31 +1561,25 @@ def mode_confidential_demo():
 # of symbols the buttons have no way to produce, e.g.:
 #   "SQRT 16 PLUS 3 TIMES X SQUARE MINUS 5 EQUALS 0"
 #   "MATRIX 2 BY 2 ROW1 1 2 ROW2 3 4 FIND DETERMINANT"
-# The AI is asked to read these the same way a teacher reading a problem
-# aloud would, and to answer the same way — in full spoken sentences,
-# never using symbols like "^", "√", or LaTeX, since that would be
-# unreadable/unspeakable for a blind student. See CHANGES.md for why
-# this approach was chosen over trying to invent new symbol input.
+# The verified local solver parses these words and gives TTS-safe results.
+# Only word problems outside its strict grammar use the clearly-labelled AI
+# fallback. See CHANGES.md for why symbol input was not added to Morse.
 MATH_SOLVER_PROMPT = (
-    "You are a patient math tutor speaking to a blind student through a "
-    "text-to-speech system. The student's question may use spelled-out "
-    "words instead of symbols (for example 'SQRT' means square root, "
-    "'SQUARE' or 'POWER 2' means squared, 'MATRIX ROW1 1 2 ROW2 3 4' "
-    "describes a matrix by rows). Solve the problem step by step. "
-    "In your answer, speak every step in plain spoken sentences — never "
-    "use mathematical symbols, exponents written with ^, square root "
-    "signs, or LaTeX, since none of that can be read aloud. Say things "
-    "like 'x squared' or 'the square root of sixteen' instead. Keep each "
-    "step short and clear. End with the final answer stated plainly.\n\n"
-    "Student's problem: "
+    "Solve this word problem as a careful math tutor. Restate exactly how you "
+    "interpreted the quantities before calculating. Check the final value "
+    "against the question. This fallback is not verified by the local symbolic "
+    "solver, so never claim that it was automatically verified. Write plain "
+    "sentences for text to speech: no Markdown, LaTeX, tables, or unexplained "
+    "symbols. Keep it to six short sentences and end with the final answer.\n\n"
+    "Problem: "
 )
 
 def mode_math_solver():
-    """Mode 9: Math Solver — voice or Morse-typed word problems, spoken step-by-step (NEW)"""
+    """Mode 9: verified local math, with a labelled AI word-problem fallback."""
     logger.info("Mode 9: Math Solver")
 
-    if not _has("ai_query"):
-        _speak("AI module is not available.")
+    if not _has("mathsolver"):
+        _speak("The verified math solver is not available. Check that SymPy is installed.")
         return
 
     _speak("Math Solver. Press 1 for voice input, or 2 to type the problem on the buttons.")
@@ -1536,10 +1614,33 @@ def mode_math_solver():
         return
 
     _speak("Solving...")
+    result = _modules["mathsolver"].solve(problem)
+    if result.ok:
+        logger.info(f"Math solved locally: kind={result.kind}, exact={result.exact}")
+        _speak(result.spoken)
+        return
+
+    if result.error_code != "UNSUPPORTED":
+        logger.warning(f"Local math rejected input: {result.error_code}")
+        _speak(result.spoken)
+        return
+
+    if not _has("ai_query"):
+        _speak(result.spoken + " The A I fallback is not available.")
+        return
+
+    _speak("This word problem is outside the verified local solver. I will try "
+           "the A I tutor, but its answer is not automatically verified.")
     answer = _modules["ai_query"].ask_ai(
-        MATH_SOLVER_PROMPT + problem, speak_fn=_speak, flush_fn=_flush_speech
+        MATH_SOLVER_PROMPT + problem,
+        # A non-empty, explicit context prevents unrelated textbook RAG
+        # retrieval from being mixed into a standalone calculation.
+        context="Standalone math problem. Use only the quantities in the problem.",
+        speak_fn=_speak,
+        flush_fn=_flush_speech,
     )
-    _speak(answer)
+    answer = _modules["mathsolver"].sanitize_ai_answer(answer)
+    _speak(answer or "The A I tutor did not return an answer.")
 
 # ── MAIN LOOP ───────────────────────────────────────────────
 

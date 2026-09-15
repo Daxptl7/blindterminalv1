@@ -20,11 +20,12 @@ Blind-Assist/
 ├── requirements.txt                   # System dependencies (Python packages)
 └── Blindterminal/                     # Core application root
     ├── main.py                        # Central Orchestrator & State Machine
-    ├── yolov8s.pt                     # YOLOv8 object detection weights
+    ├── models_local/                   # Local model assets (not committed)
+    │   ├── yolo/                       # YOLO/NCNN object weights
+    │   └── mediapipe/                  # Hand Landmarker task bundle
     ├── blindassist_detection.log      # Application runtime logs
     ├── config/                        # System configuration & model assets
     │   ├── settings.json              # API keys and audio parameters
-    │   └── hand_landmarker.task       # MediaPipe gesture detection asset
     ├── modules/                       # Decoupled feature modules (Hardware & I/O)
     │   ├── __init__.py
     │   ├── ai_query.py                # Bridge between Orchestrator and RAG Pipeline
@@ -32,6 +33,7 @@ Blind-Assist/
     │   ├── emotion_engine.py          # Voice tone MFCC analyzer for speech modulation
     │   ├── gesture_control.py         # MediaPipe computer vision gesture recognition
     │   ├── gps_navigator.py           # Coordinate tracking & route spoken navigation
+    │   ├── math_solver.py             # Exact offline arithmetic and algebra
     │   ├── morse.py                   # Tactile Morse code input decoder
     │   ├── object_detection.py        # Real-time YOLOv8 obstacle & item detection
     │   ├── ocr.py                     # OpenCV & Tesseract OCR camera scanner
@@ -111,13 +113,21 @@ All modules follow a strict **Decoupled Architecture** and communicate exclusive
 | **`voice.py`**             | Captures microphone audio, calibrates ambient noise, and converts spoken voice into text queries.                                          | `SpeechRecognition`, `PyAudio`  |
 | **`ocr.py`**               | Captures camera frames, applies OpenCV image preprocessing, extracts document text via Tesseract, and feeds it into RAG indexing.          | `opencv-python`, `pytesseract`  |
 | **`ai_query.py`**          | High-level controller coordinating RAG textbook queries and direct conversational AI modes.                                                | Internal RAG Pipeline           |
-| **`gesture_control.py`**   | Computer vision module processing live webcam frames to detect hand landmarks and recognize gestures (Open Palm, V-Sign, Thumbs Up, Fist). | `mediapipe`, `opencv-python`    |
-| **`object_detection.py`**  | Real-time object and obstacle detection announcing surrounding objects and distances for spatial awareness.                                | `ultralytics` (YOLOv8s), OpenCV |
+| **`gesture_control.py`**   | Shuttered hand control with framing guidance and five rotation-independent poses: OCR, voice, object detection, GPS, and stop. | `mediapipe`, `opencv-python`    |
+| **`object_detection.py`**  | Multi-frame object recognition with short left/centre/right announcements. It does not measure distance or certify a safe walking route.     | `ultralytics` (YOLOv8n/NCNN), OpenCV / `rpicam-vid` |
 | **`gps_navigator.py`**     | Geocoding and route planning service generating spoken step-by-step navigation instructions.                                               | OpenStreetMap Nominatim / OSRM  |
 | **`emotion_engine.py`**    | Analyzes voice tone pitch and MFCC audio features; slows down TTS speech rate if acoustic confusion/stress is detected.                    | `librosa`, `scikit-learn`       |
 | **`translator.py`**        | Translates educational content and spoken responses between English, Hindi, and Gujarati.                                                  | Google Translate web endpoint   |
 | **`morse.py`**             | Decodes tactile dot/dash inputs from physical switches or keyboard keys into alphanumeric commands for silent operation.                   | Custom timing state machine     |
+| **`math_solver.py`**       | Safely parses spoken mathematics and exactly solves arithmetic, equations, percentages, averages, and determinants before any AI fallback. | `sympy`, Python AST              |
 | **`confidential_mode.py`** | Toggles silent audio readout and requires explicit user confirmation for private notifications.                                            | System state flags              |
+
+Mode 6 installation, camera selection, Raspberry Pi optimization, and validation
+are documented in [docs/OBJECT_DETECTION_SETUP.md](docs/OBJECT_DETECTION_SETUP.md).
+Mode 5 model installation, accessible controls, laptop/Pi testing, and accuracy
+measurement are documented in [docs/GESTURE_CONTROL_SETUP.md](docs/GESTURE_CONTROL_SETUP.md).
+Mode 9 supported notation, verification behavior, and laptop/Pi tests are
+documented in [docs/MATH_SOLVER_SETUP.md](docs/MATH_SOLVER_SETUP.md).
 
 ---
 

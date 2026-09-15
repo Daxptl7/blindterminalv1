@@ -64,11 +64,13 @@ groq>=0.9.0
 opencv-python>=4.9.0
 pytesseract>=0.3.10
 ultralytics>=8.2.0
+mediapipe>=0.10.14,<0.10.35
 
 # ── Signal processing ───────────────────────────────────────
 # voice.py uses scipy.signal.lfilter for the microphone bandpass filter; the
 # pure-Python fallback works but is ~25x slower, which is felt on a Pi.
 scipy>=1.11.0
+sympy>=1.12,<2.0
 
 # ── Vector Store / RAG ──────────────────────────────────────
 numpy>=1.26.0
@@ -95,7 +97,6 @@ logfire>=2.0.0
 #   pip install webrtcvad-wheels         # VAD capture (hands-free voice)
 #   pip install sounddevice>=0.4.7
 #   pip install soundfile>=0.12.1
-#   pip install "mediapipe>=0.10.14,<0.10.35"   # Mode 5 gestures; no Py3.13 wheels yet
 #   pip install librosa>=0.10.1          # emotion engine
 #   pip install scikit-learn>=1.5.0      # emotion engine
 #   pip install llama-cpp-python>=0.2.90 # offline LLM fallback
