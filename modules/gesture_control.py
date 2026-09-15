@@ -1,47 +1,18 @@
 """
-gesture_control.py — BlindAssist Project (OPTIMIZED + ENHANCED)
-================================================================
-MediaPipe VIDEO mode for continuous streaming (10x faster than IMAGE mode).
-Reuses detector across frames. No per-frame reallocation.
+gesture_control.py — BlindAssist product gesture input
+=======================================================
+MediaPipe hand landmarks with rotation-independent joint-angle geometry,
+camera framing guidance, explicit startup failures, and shuttered multi-frame
+confirmation. The production vocabulary is intentionally small:
 
-GESTURE MAP — Full Reference
-──────────────────────────────────────────────────────────────────────
-ORIGINAL GESTURES (unchanged):
-  MODE_SCAN   → Open Palm (all 5 fingers spread)   → Trigger OCR scan
-  CONFIRM     → Thumbs Up (thumb only, others curl) → Confirm / Yes
-  MODE_VOICE  → Two Fingers (index + middle up)     → Voice ask mode
-  REPEAT      → Index Pointing Down                 → Repeat last audio
-  STOP        → Fist (all fingers curled)           → Stop / Cancel
+  MODE_SCAN      → open palm               → OCR scan
+  MODE_VOICE     → index + middle fingers  → voice question
+  OBJECT_DETECT  → index finger            → object detection
+  GPS_CHECK      → index + middle + ring    → GPS mode
+  STOP           → closed fist             → leave gesture mode
 
-NEW GESTURES (added in this version):
-  OBJECT_DETECT     → Index Pointing Up/Forward (index up, others curled)
-                       → Triggers object detection: "What is in front?"
-  GPS_CHECK         → Three Fingers (index + middle + ring up, others curl)
-                       → Reads current GPS location or next waypoint
-  TOGGLE_PRIVACY    → Shaka / Call-Me (pinky + thumb out, index/middle/ring curl)
-                       → Toggle Confidential Mode on/off
-  SWIPE_RIGHT       → Hand moves RIGHT across frame (wrist x-velocity > threshold)
-                       → Volume UP
-  SWIPE_LEFT        → Hand moves LEFT across frame (wrist x-velocity < -threshold)
-                       → Volume DOWN
-  STATUS_CHECK      → OK Sign (thumb tip touches index tip, other 3 fingers up)
-                       → Read battery level, time, network status aloud
-
-ACCURACY IMPROVEMENTS in this version:
-  - Wrist normalisation: all finger-extended checks use wrist as Y anchor
-    so the result is invariant to hand height in frame
-  - Thumb uses ratio + lift check (inherited from original, kept)
-  - Three-Fingers and Shaka each have a negative guard (verifies
-    the fingers that must be DOWN are actually down) to prevent
-    false triggers from partial detections
-  - OK sign uses pixel-distance threshold scaled to hand size
-    (index-to-wrist distance) so it works at any camera distance
-  - Swipe uses a rolling deque of wrist X positions (last 8 frames)
-    and requires minimum displacement + minimum speed to trigger,
-    preventing accidental volume changes from slow hand movement
-  - Confidence threshold applied separately in the detector options
-  - Debounce/cooldown unchanged from original (configurable in settings.json)
-──────────────────────────────────────────────────────────────────────
+The physical shutter remains mandatory in Mode 5. A pose never launches a
+feature merely because a hand passed through the camera view.
 """
 
 import sys
@@ -73,11 +44,16 @@ try:
 except Exception:
     pass
 
-GESTURE_CONFIDENCE          = float(_settings.get("gesture_confidence", 0.85))
+GESTURE_CONFIDENCE          = float(_settings.get("gesture_confidence", 0.60))
 GESTURE_DISPLAY             = bool(_settings.get("gesture_display", False))
 GESTURE_CAMERA_INDEX        = int(_settings.get("gesture_camera_index", 0))
+GESTURE_CAMERA_BACKEND      = str(
+    _settings.get("gesture_camera_backend", "auto")
+).strip().lower()
 GESTURE_BACKEND             = str(_settings.get("gesture_backend", "auto")).lower()
 GESTURE_ALLOW_UNSAFE_TASKS  = bool(_settings.get("gesture_allow_unsafe_tasks", False))
+GESTURE_ENABLE_SWIPES       = bool(_settings.get("gesture_enable_swipes", False))
+DEFAULT_HAND_MODEL_PATH     = BASE_DIR / "models_local" / "mediapipe" / "hand_landmarker.task"
 
 # ── MEDIAPIPE VIDEO MODE SETUP ──────────────────────────────────────────────
 mp              = None
@@ -115,63 +91,98 @@ if MEDIAPIPE_AVAILABLE:
 
 # ── LANDMARK INDICES (MediaPipe 21-point hand model) ────────────────────────
 WRIST                       = 0
-THUMB_TIP, THUMB_IP, THUMB_MCP = 4, 3, 2
-INDEX_MCP                   = 5
-INDEX_TIP,   INDEX_PIP      = 8,  6
-MIDDLE_TIP,  MIDDLE_PIP     = 12, 10
-RING_TIP,    RING_PIP       = 16, 14
-PINKY_TIP,   PINKY_PIP      = 20, 18
+THUMB_CMC, THUMB_MCP, THUMB_IP, THUMB_TIP = 1, 2, 3, 4
+INDEX_MCP, INDEX_PIP, INDEX_DIP, INDEX_TIP = 5, 6, 7, 8
+MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP = 9, 10, 11, 12
+RING_MCP, RING_PIP, RING_DIP, RING_TIP = 13, 14, 15, 16
+PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP = 17, 18, 19, 20
+
+_FINGER_CHAINS = (
+    (INDEX_MCP, INDEX_PIP, INDEX_DIP, INDEX_TIP),
+    (MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP),
+    (RING_MCP, RING_PIP, RING_DIP, RING_TIP),
+    (PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP),
+)
+_STRAIGHT_PIP_DEG = float(_settings.get("gesture_straight_pip_degrees", 150.0))
+_STRAIGHT_DIP_DEG = float(_settings.get("gesture_straight_dip_degrees", 145.0))
 
 # ── GEOMETRY HELPERS ─────────────────────────────────────────────────────────
 
 def _dist(a, b) -> float:
-    """Euclidean distance between two normalised landmarks."""
-    return float(np.hypot(a.x - b.x, a.y - b.y))
+    """3D Euclidean distance between two normalised landmarks."""
+    return float(np.linalg.norm(_point(a) - _point(b)))
 
 
-def _finger_extended(lm, tip: int, pip: int) -> bool:
-    """
-    A finger is extended when its tip is higher in the frame (smaller Y)
-    than its middle joint (PIP). Using raw Y works well for a camera that
-    faces the user from in front (endoscope on glasses).
-    Wrist-anchored variant is used for swipe and OK to make them
-    distance-invariant (see _finger_extended_anchored below).
-    """
-    return lm[tip].y < lm[pip].y
+def _point(landmark) -> np.ndarray:
+    return np.asarray(
+        [float(landmark.x), float(landmark.y), float(getattr(landmark, "z", 0.0))],
+        dtype=np.float64,
+    )
 
 
-def _finger_extended_anchored(lm, tip: int, pip: int) -> bool:
-    """
-    Wrist-anchored extension check: tip must be above (smaller Y) the PIP
-    AND the PIP must itself be above the wrist.  This prevents the index
-    finger from being classified as 'extended' when the whole hand is
-    pointing downward.
-    """
-    above_pip   = lm[tip].y  < lm[pip].y
-    pip_above_wrist = lm[pip].y < lm[WRIST].y
-    return above_pip and pip_above_wrist
+def _joint_angle(a, joint, c) -> float:
+    """Angle ABC in degrees; zero means the landmarks are degenerate."""
+    first = _point(a) - _point(joint)
+    second = _point(c) - _point(joint)
+    denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
+    if denominator < 1e-9:
+        return 0.0
+    cosine = float(np.dot(first, second) / denominator)
+    return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+
+
+def _finger_extended(lm, chain) -> bool:
+    """Return True for a nearly straight finger, independent of screen Y."""
+    mcp, pip, dip, tip = chain
+    pip_angle = _joint_angle(lm[mcp], lm[pip], lm[dip])
+    dip_angle = _joint_angle(lm[pip], lm[dip], lm[tip])
+    reaches_out = _dist(lm[WRIST], lm[tip]) > _dist(lm[WRIST], lm[pip]) * 1.03
+    return (
+        pip_angle >= _STRAIGHT_PIP_DEG
+        and dip_angle >= _STRAIGHT_DIP_DEG
+        and reaches_out
+    )
 
 
 def _thumb_extended(lm) -> bool:
-    """
-    Thumb extension: uses ratio of distances to INDEX_MCP as a size-invariant
-    check PLUS a lifted-tip check. Both signals are OR-ed so it works whether
-    the hand is flat or at an angle.
-    """
-    thumb_from_palm    = _dist(lm[THUMB_TIP], lm[INDEX_MCP])
-    thumb_ip_from_palm = _dist(lm[THUMB_IP],  lm[INDEX_MCP])
-    thumb_lifted       = lm[THUMB_TIP].y < lm[THUMB_IP].y
-    return thumb_from_palm > thumb_ip_from_palm * 1.35 or thumb_lifted
+    mcp_angle = _joint_angle(lm[THUMB_CMC], lm[THUMB_MCP], lm[THUMB_IP])
+    ip_angle = _joint_angle(lm[THUMB_MCP], lm[THUMB_IP], lm[THUMB_TIP])
+    reaches_out = (
+        _dist(lm[WRIST], lm[THUMB_TIP])
+        > _dist(lm[WRIST], lm[THUMB_IP]) * 1.02
+    )
+    return mcp_angle >= 135.0 and ip_angle >= 145.0 and reaches_out
 
 
 def _hand_size(lm) -> float:
     """
-    Approximate hand size as the wrist-to-INDEX_MCP distance.
+    Approximate hand size as the wrist-to-middle-MCP distance.
     Used to normalise distance thresholds so they work at any
     camera-to-hand distance.
     Returns at least 0.01 to avoid division-by-zero.
     """
-    return max(_dist(lm[WRIST], lm[INDEX_MCP]), 0.01)
+    return max(_dist(lm[WRIST], lm[MIDDLE_MCP]), 0.01)
+
+
+def framing_guidance(landmarks) -> str:
+    """Return blind-friendly hand-placement feedback for the preview button."""
+    if not landmarks or len(landmarks) < 21:
+        return "NO_HAND"
+    xs = [float(point.x) for point in landmarks]
+    ys = [float(point.y) for point in landmarks]
+    left, right = min(xs), max(xs)
+    top, bottom = min(ys), max(ys)
+    width, height = right - left, bottom - top
+    if left < 0.02 or right > 0.98 or top < 0.02 or bottom > 0.98:
+        return "HAND_CROPPED"
+    if max(width, height) < 0.22:
+        return "MOVE_CLOSER"
+    center_x = (left + right) / 2
+    if center_x < 0.35:
+        return "MOVE_RIGHT"
+    if center_x > 0.65:
+        return "MOVE_LEFT"
+    return "READY"
 
 
 # ── GESTURE CLASSIFICATION ───────────────────────────────────────────────────
@@ -180,112 +191,37 @@ def classify_gesture(landmarks) -> Optional[str]:
     """
     Map 21 MediaPipe hand landmarks to BlindAssist gesture commands.
 
-    All original gestures are UNCHANGED.
-    Five new gestures are appended below the originals.
-
-    Check order matters: more specific patterns are checked first to
-    prevent accidental overlap with broader checks.
+    Only poses connected to real Mode 5 actions are emitted. Finger extension
+    is based on joint angles rather than whether a fingertip points upward in
+    the image, so rotating the hand does not change its meaning.
     """
     if not landmarks or len(landmarks) < 21:
         return None
 
-    lm   = landmarks
-    size = _hand_size(lm)          # used by OK-sign only
+    lm = landmarks
+    index, middle, ring, pinky = (
+        _finger_extended(lm, chain) for chain in _FINGER_CHAINS
+    )
+    thumb = _thumb_extended(lm)
 
-    # ── Compute per-finger extension ───────────────────────────────────────
-    thumb   = _thumb_extended(lm)
-    thumb_up = lm[THUMB_TIP].y < lm[THUMB_IP].y < lm[THUMB_MCP].y
-
-    index  = _finger_extended(lm, INDEX_TIP,  INDEX_PIP)
-    middle = _finger_extended(lm, MIDDLE_TIP, MIDDLE_PIP)
-    ring   = _finger_extended(lm, RING_TIP,   RING_PIP)
-    pinky  = _finger_extended(lm, PINKY_TIP,  PINKY_PIP)
-
-    # Anchored variants for gestures that need extra precision
-    index_anc  = _finger_extended_anchored(lm, INDEX_TIP,  INDEX_PIP)
-    middle_anc = _finger_extended_anchored(lm, MIDDLE_TIP, MIDDLE_PIP)
-    ring_anc   = _finger_extended_anchored(lm, RING_TIP,   RING_PIP)
-    pinky_anc  = _finger_extended_anchored(lm, PINKY_TIP,  PINKY_PIP)
-
-    fingers = np.array([thumb, index, middle, ring, pinky], dtype=bool)
-    count   = int(fingers.sum())
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # ORIGINAL GESTURES — not changed, only reordered for precedence
-    # ═══════════════════════════════════════════════════════════════════════
-
-    # ── OPEN PALM → MODE_SCAN (OCR) ─────────────────────────────────────────
-    # All 5 fingers extended (thumb optional check is already lenient enough)
-    if all(fingers):
+    # Open palm: the four long fingers matter; thumb pose varies substantially
+    # between users and is not needed to distinguish this from other commands.
+    if index and middle and ring and pinky:
         return "MODE_SCAN"
 
-    # ── THUMBS UP → CONFIRM ─────────────────────────────────────────────────
-    # Strict: thumb pointing up AND every other finger curled
-    if thumb_up and not any(fingers[1:]):
-        return "CONFIRM"
+    if index and middle and ring and not pinky:
+        return "GPS_CHECK"
 
-    # ── TWO FINGERS → MODE_VOICE ────────────────────────────────────────────
-    # Index + middle up, ring + pinky down, thumb state irrelevant
     if index and middle and not ring and not pinky:
         return "MODE_VOICE"
 
-    # ── INDEX POINTING DOWN → REPEAT ────────────────────────────────────────
-    index_pointing_down = (
-        lm[INDEX_TIP].y > lm[INDEX_PIP].y > lm[INDEX_MCP].y
-    )
-    if index_pointing_down and not middle and not ring and not pinky:
-        return "REPEAT"
-
-    # ── FIST → STOP ─────────────────────────────────────────────────────────
-    if count == 0:
-        return "STOP"
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # NEW GESTURES
-    # ═══════════════════════════════════════════════════════════════════════
-
-    # ── INDEX POINTING UP → OBJECT_DETECT ("What is that?") ────────────────
-    # Index extended upward (anchored check), middle/ring/pinky all curled,
-    # thumb state irrelevant.  This is distinct from TWO_FINGERS because
-    # the middle finger must be DOWN here.
-    if index_anc and not middle and not ring and not pinky:
+    if index and not middle and not ring and not pinky:
         return "OBJECT_DETECT"
 
-    # ── THREE FINGERS → GPS_CHECK ("Where am I?") ──────────────────────────
-    # Index + middle + ring extended, pinky curled, thumb curled.
-    # Negative guards on pinky and thumb prevent overlap with OPEN_PALM.
-    if index and middle and ring and not pinky and not thumb:
-        return "GPS_CHECK"
-
-    # ── SHAKA / CALL-ME → TOGGLE_PRIVACY ───────────────────────────────────
-    # Pinky extended UP and thumb extended OUT, index/middle/ring all curled.
-    # Uses anchored checks for pinky to avoid false trigger from floppy pinky.
-    shaka_pinky = pinky_anc
-    shaka_thumb = lm[THUMB_TIP].y < lm[THUMB_MCP].y   # thumb lifted laterally
-    shaka_index_down  = not index_anc
-    shaka_middle_down = not middle_anc
-    shaka_ring_down   = not ring_anc
-
-    if (shaka_pinky and shaka_thumb
-            and shaka_index_down and shaka_middle_down and shaka_ring_down):
-        return "TOGGLE_PRIVACY"
-
-    # ── OK SIGN → STATUS_CHECK (Battery / Time / Network) ──────────────────
-    # Thumb tip and index tip are close together (circle),
-    # while middle, ring, pinky are extended upward.
-    # Distance threshold is normalised by hand size so it works at any range.
-    thumb_index_close = _dist(lm[THUMB_TIP], lm[INDEX_TIP]) < size * 0.45
-    ok_middle = _finger_extended_anchored(lm, MIDDLE_TIP, MIDDLE_PIP)
-    ok_ring   = _finger_extended_anchored(lm, RING_TIP,   RING_PIP)
-    ok_pinky  = _finger_extended_anchored(lm, PINKY_TIP,  PINKY_PIP)
-
-    if thumb_index_close and ok_middle and ok_ring and ok_pinky:
-        return "STATUS_CHECK"
-
-    # NOTE: SWIPE_LEFT and SWIPE_RIGHT are not detected here.
-    # Swipe requires tracking wrist position across multiple frames,
-    # which cannot be done from a single frame's landmarks.
-    # See _update_swipe_detector() called in the detection loop below.
+    # A thumb-only pose is not a fist. This guard prevents a thumbs-up from
+    # accidentally leaving gesture mode.
+    if not any((index, middle, ring, pinky)) and not thumb:
+        return "STOP"
 
     return None
 
@@ -339,6 +275,45 @@ def _update_swipe_detector(state: dict, lm, now_ms: float) -> Optional[str]:
     return gesture
 
 
+class GestureVoteWindow:
+    """Time-bounded majority vote that counts unrecognized frames as misses."""
+
+    def __init__(self, window_ms: int = 1000, fresh_ms: int = 300,
+                 min_frames: int = 5, min_support: float = 0.60):
+        self.window_ms = max(100, int(window_ms))
+        self.fresh_ms = max(50, int(fresh_ms))
+        self.min_frames = max(1, int(min_frames))
+        self.min_support = min(max(float(min_support), 0.50), 1.0)
+        self.samples = deque(maxlen=120)
+
+    def add(self, timestamp_ms: float, gesture: Optional[str]):
+        self.samples.append((float(timestamp_ms), gesture))
+
+    def clear(self):
+        self.samples.clear()
+
+    def vote(self, now_ms: float) -> Optional[str]:
+        window = [
+            (timestamp, gesture)
+            for timestamp, gesture in self.samples
+            if now_ms - timestamp <= self.window_ms
+        ]
+        if len(window) < self.min_frames:
+            return None
+        seen = [gesture for _, gesture in window if gesture]
+        if not seen:
+            return None
+        winner, count = Counter(seen).most_common(1)[0]
+        if not any(
+            gesture == winner and now_ms - timestamp <= self.fresh_ms
+            for timestamp, gesture in window
+        ):
+            return None
+        if count < self.min_frames or count / len(window) < self.min_support:
+            return None
+        return winner
+
+
 # ── CAMERA HELPERS ────────────────────────────────────────────────────────────
 
 def _callback_allows_continue(callback_fn: Optional[Callable], gesture: str) -> bool:
@@ -349,11 +324,9 @@ def _callback_allows_continue(callback_fn: Optional[Callable], gesture: str) -> 
     return result is not False
 
 
-# Gesture control uses the WIRED USB camera. The CSI Camera Module on the Pi's
-# ribbon connector belongs to OCR (ocr.py drives it through rpicam-still), and
-# its kernel nodes must never be picked up here: several of them open
-# successfully and then deliver nothing, which is indistinguishable from a
-# broken camera at the point where it matters.
+# OpenCV probing deliberately excludes Pi ISP/metadata nodes: several open
+# successfully and then deliver nothing. In auto mode, a real USB stream is
+# preferred and Camera Module 3 is the command-line rpicam fallback.
 _NON_CAMERA_NODE_HINTS = ("unicam", "bcm2835-isp", "rpivid", "pispbe",
                           "codec", "hevc", "isp", "stat", "meta")
 
@@ -422,8 +395,8 @@ def _probe_v4l2(index: int):
     return None
 
 
-def _open_camera(camera_index: Optional[int]):
-    """Open the wired USB camera. The configured index is only a hint.
+def _open_usb_camera(camera_index: Optional[int]):
+    """Open a wired USB camera. The configured index is only a hint.
 
     gesture_camera_index was 8 on the device — a node that does not exist — and
     the mode reported "Camera failed: index 8" and gave up while a working USB
@@ -444,7 +417,10 @@ def _open_camera(camera_index: Optional[int]):
         order.append(camera_index)
     order += [i for i in usb_indices if i not in order]
     order += [i for i in other_indices if i not in order]
-    if not nodes:                          # no sysfs (macOS): scan blindly
+    sysfs_present = sys.platform.startswith("linux") and os.path.isdir(
+        "/sys/class/video4linux"
+    )
+    if not nodes and not sysfs_present:   # no sysfs (macOS): scan blindly
         order += [i for i in range(0, 11) if i not in order]
 
     # Probing absent indices makes OpenCV shout on stderr; quiet it for the
@@ -476,10 +452,58 @@ def _open_camera(camera_index: Optional[int]):
             except Exception:
                 pass
 
+    logger.warning("No working USB camera found for gesture control.")
+    return None
+
+
+def _open_rpicam_camera():
+    """Reuse the tested Camera Module 3 MJPEG adapter from object detection."""
+    try:
+        from modules.object_detection import (
+            _RpicamMjpegCapture,
+            _find_rpicam_binary,
+        )
+    except Exception as exc:
+        logger.warning(f"Raspberry Pi camera adapter unavailable: {exc}")
+        return None
+    binary = _find_rpicam_binary()
+    if not binary:
+        return None
+    try:
+        camera = int(_settings.get("gesture_rpicam_camera", 0))
+        fps = int(_settings.get("gesture_camera_fps", 15))
+        cap = _RpicamMjpegCapture(binary, fps=fps, camera=camera)
+        for _ in range(3):
+            ok, frame = cap.read()
+            if ok and frame is not None and frame.size:
+                logger.info(f"Gesture camera ready through {Path(binary).name}.")
+                return cap
+        cap.release()
+    except Exception as exc:
+        logger.warning(f"Raspberry Pi gesture camera failed: {exc}")
+    return None
+
+
+def _open_camera(camera_index: Optional[int]):
+    selected = GESTURE_CAMERA_BACKEND
+    if selected not in {"auto", "usb", "opencv", "rpicam"}:
+        logger.warning(f"Unknown gesture_camera_backend={selected!r}; using auto.")
+        selected = "auto"
+
+    if selected in {"auto", "usb", "opencv"}:
+        cap = _open_usb_camera(camera_index)
+        if cap is not None:
+            return cap
+        if selected != "auto":
+            return None
+    if selected in {"auto", "rpicam"}:
+        cap = _open_rpicam_camera()
+        if cap is not None:
+            return cap
+
     logger.error(
-        "No working USB camera found for gesture control. Check that the wired "
-        "camera is plugged in — `v4l2-ctl --list-devices` shows what the Pi "
-        "sees. The CSI camera is not used here; it belongs to OCR.")
+        "No gesture camera returned frames. Check the USB camera or rpicam-apps."
+    )
     return None
 
 
@@ -497,6 +521,27 @@ def _create_task_detector(model_path: Path):
         min_tracking_confidence=0.5,
     )
     return vision.HandLandmarker.create_from_options(options)
+
+
+def _resolve_hand_model_path() -> Path:
+    """Return the configured Tasks model path, including the old location.
+
+    The model is intentionally kept under models_local so it is not committed
+    to git. Existing installations that placed it in config/ continue to work.
+    """
+    configured = str(_settings.get("gesture_hand_model_path", "")).strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path.resolve()
+
+    if DEFAULT_HAND_MODEL_PATH.exists():
+        return DEFAULT_HAND_MODEL_PATH
+    legacy = CONFIG_PATH.parent / "hand_landmarker.task"
+    if legacy.exists():
+        return legacy
+    return DEFAULT_HAND_MODEL_PATH
 
 
 def _create_classic_detector():
@@ -521,6 +566,76 @@ def _tasks_backend_allowed(model_path: Path) -> bool:
     return True
 
 
+def diagnostics(probe_camera: bool = False, load_backend: bool = False) -> dict:
+    """Return actionable gesture readiness information without starting Mode 5."""
+    model_path = _resolve_hand_model_path()
+    info = {
+        "mediapipe_ready": MEDIAPIPE_AVAILABLE,
+        "classic_backend_ready": CLASSIC_HANDS_AVAILABLE,
+        "tasks_backend_ready": TASKS_AVAILABLE,
+        "model_path": str(model_path),
+        "model_ready": model_path.is_file(),
+        "backend": None,
+        "backend_ready": False,
+        "backend_error": None,
+        "camera_backend": GESTURE_CAMERA_BACKEND,
+        "camera_ready": None,
+        "camera_error": None,
+    }
+    if not MEDIAPIPE_AVAILABLE:
+        info["backend_error"] = "mediapipe is not installed"
+    elif CLASSIC_HANDS_AVAILABLE and GESTURE_BACKEND in {"auto", "classic"}:
+        info["backend"] = "classic"
+        info["backend_ready"] = True
+    elif TASKS_AVAILABLE and GESTURE_BACKEND in {"auto", "tasks"}:
+        info["backend"] = "tasks"
+        if not model_path.is_file():
+            info["backend_error"] = (
+                "hand landmarker model is missing; run "
+                "python3 scripts/prepare_gesture_control.py"
+            )
+        elif not _tasks_backend_allowed(model_path):
+            info["backend_error"] = (
+                "MediaPipe Tasks is disabled on this macOS installation"
+            )
+        else:
+            info["backend_ready"] = True
+    else:
+        info["backend_error"] = "no compatible MediaPipe hand backend"
+
+    if load_backend and info["backend_ready"]:
+        detector = None
+        try:
+            detector = (
+                _create_classic_detector()
+                if info["backend"] == "classic"
+                else _create_task_detector(model_path)
+            )
+        except Exception as exc:
+            info["backend_ready"] = False
+            info["backend_error"] = str(exc)
+        finally:
+            if detector is not None:
+                detector.close()
+
+    if probe_camera:
+        cap = _open_camera(GESTURE_CAMERA_INDEX)
+        if cap is None:
+            info["camera_ready"] = False
+            info["camera_error"] = (
+                "no camera returned frames; check camera permission, USB, or rpicam-apps"
+            )
+        else:
+            try:
+                ok, frame = cap.read()
+                info["camera_ready"] = bool(ok and frame is not None)
+                if not info["camera_ready"]:
+                    info["camera_error"] = "camera opened but did not return an image"
+            finally:
+                cap.release()
+    return info
+
+
 # ── MAIN DETECTION LOOP ───────────────────────────────────────────────────────
 
 def detect_gesture(callback_fn: Optional[Callable] = None,
@@ -538,12 +653,12 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
     Return anything else (True, None) to continue.
 
     Gesture strings emitted:
-        Original:  MODE_SCAN, CONFIRM, MODE_VOICE, REPEAT, STOP
-        New:       OBJECT_DETECT, GPS_CHECK, TOGGLE_PRIVACY,
-                   STATUS_CHECK, SWIPE_RIGHT, SWIPE_LEFT
+        MODE_SCAN, MODE_VOICE, OBJECT_DETECT, GPS_CHECK, STOP
     """
     if not MEDIAPIPE_AVAILABLE:
         logger.error("MediaPipe unavailable")
+        if callback_fn is not None:
+            _callback_allows_continue(callback_fn, "MEDIAPIPE_UNAVAILABLE")
         return
 
     if camera_index is None:
@@ -556,7 +671,7 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
         logger.warning(f"Unknown gesture_backend '{requested_backend}', using auto")
         requested_backend = "auto"
 
-    model_path = CONFIG_PATH.parent / "hand_landmarker.task"
+    model_path = _resolve_hand_model_path()
     detector   = None
     backend    = None
 
@@ -577,11 +692,29 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
             logger.warning(f"MediaPipe Tasks setup failed, using classic Hands fallback: {e}")
 
     if detector is None:
-        logger.error(
-            "No safe MediaPipe hand backend is available. Install a MediaPipe "
-            "build with solutions.hands, run on Raspberry Pi/Linux, or set "
-            "gesture_allow_unsafe_tasks=true after validating Tasks locally."
+        model_missing = (
+            requested_backend in {"auto", "tasks"}
+            and TASKS_AVAILABLE
+            and not model_path.is_file()
+            and not (
+                requested_backend in {"auto", "classic"}
+                and CLASSIC_HANDS_AVAILABLE
+            )
         )
+        logger.error(
+            "MediaPipe hand backend unavailable: "
+            + (
+                f"model missing at {model_path}; run "
+                "python3 scripts/prepare_gesture_control.py."
+                if model_missing else
+                "install a compatible MediaPipe build or validate the Tasks backend."
+            )
+        )
+        if callback_fn is not None:
+            _callback_allows_continue(
+                callback_fn,
+                "HAND_MODEL_MISSING" if model_missing else "BACKEND_UNAVAILABLE",
+            )
         return
 
     cap = _open_camera(camera_index)
@@ -625,32 +758,19 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
     # available.
     shutter_mode   = capture_check is not None
     CAPTURE_WINDOW_MS = int(_settings.get("gesture_capture_window_ms", 1000))
-    recent_gestures = deque(maxlen=90)          # (timestamp_ms, gesture|None)
-
     CAPTURE_FRESH_MS = int(_settings.get("gesture_capture_fresh_ms", 300))
-
-    def _vote(now_ms):
-        window = [(ts, g) for ts, g in recent_gestures
-                  if now_ms - ts <= CAPTURE_WINDOW_MS]
-        seen = [g for _, g in window if g]
-        if not seen:
-            return None
-
-        winner, count = Counter(seen).most_common(1)[0]
-
-        # The pose has to still be in front of the camera. Counting only the
-        # frames that saw a hand means a hand already lowered still wins its
-        # own vote, so pressing the shutter after dropping your arm would fire
-        # whatever was last held.
-        if not any(g == winner and now_ms - ts <= CAPTURE_FRESH_MS
-                   for ts, g in window):
-            return None
-
-        # And it has to dominate rather than merely appear, so a shape passed
-        # through on the way to another one is not what gets taken.
-        if count * 2 < len(seen):
-            return None
-        return winner
+    CAPTURE_MIN_FRAMES = int(_settings.get("gesture_capture_min_frames", 5))
+    CAPTURE_MIN_SUPPORT = float(
+        _settings.get("gesture_capture_min_support", 0.60)
+    )
+    CAPTURE_MIN_SUPPORT = min(max(CAPTURE_MIN_SUPPORT, 0.50), 1.0)
+    vote_window = GestureVoteWindow(
+        window_ms=CAPTURE_WINDOW_MS,
+        fresh_ms=CAPTURE_FRESH_MS,
+        min_frames=CAPTURE_MIN_FRAMES,
+        min_support=CAPTURE_MIN_SUPPORT,
+    )
+    latest_guidance = "NO_HAND"
 
     # ── Swipe detector state ───────────────────────────────────────────────
     swipe_state = _make_swipe_state()
@@ -659,6 +779,7 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
     frame_times      = deque(maxlen=30)
     last_timestamp_ms = 0
     frame_count      = 0
+    failed_reads     = 0
 
     try:
         while not (stop_event and stop_event.is_set()):
@@ -667,7 +788,13 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
             ret, frame = cap.read()
             if not ret:
                 logger.warning("Camera frame read failed")
-                break
+                failed_reads += 1
+                if failed_reads >= 5:
+                    if callback_fn is not None:
+                        _callback_allows_continue(callback_fn, "FRAME_READ_FAILED")
+                    break
+                continue
+            failed_reads = 0
 
             # Mirror so hand movement feels natural (right swipe = right on screen)
             frame = cv2.flip(frame, 1)
@@ -692,10 +819,16 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
                     hands = [hand.landmark for hand in results.multi_hand_landmarks]
 
             current = None
+            latest_guidance = "NO_HAND"
 
             for hand in hands:
                 hand_lm_raw = hand
-                current     = classify_gesture(hand)
+                latest_guidance = framing_guidance(hand)
+                # A cropped or tiny hand can produce plausible landmarks but a
+                # dangerously unreliable pose. Keep it out of the vote and let
+                # Preview explain how to correct the framing.
+                if latest_guidance == "READY":
+                    current = classify_gesture(hand)
 
                 if display:
                     h, w = frame.shape[:2]
@@ -709,7 +842,9 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
 
             # ── Swipe detection (cross-frame, runs every frame) ───────────
             now_ms  = time.time() * 1000
-            swipe   = _update_swipe_detector(swipe_state, hand_lm_raw, now_ms)
+            swipe = None
+            if GESTURE_ENABLE_SWIPES and not shutter_mode:
+                swipe = _update_swipe_detector(swipe_state, hand_lm_raw, now_ms)
 
             # Swipe overrides classify_gesture if one was detected this frame
             if swipe is not None:
@@ -717,7 +852,7 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
 
             # ── Shutter mode: report only when the caller asks ─────────────
             if shutter_mode:
-                recent_gestures.append((now_ms, current))
+                vote_window.add(now_ms, current)
                 request = None
                 try:
                     request = capture_check()
@@ -725,16 +860,19 @@ def detect_gesture(callback_fn: Optional[Callable] = None,
                     logger.debug(f"capture_check raised: {e}")
 
                 if request == "preview":
-                    if not _callback_allows_continue(
-                            callback_fn, f"PREVIEW:{_vote(now_ms) or 'NONE'}"):
+                    captured = vote_window.vote(now_ms)
+                    report = (f"PREVIEW:{captured}" if captured
+                              else f"PREVIEW_GUIDANCE:{latest_guidance}")
+                    if not _callback_allows_continue(callback_fn, report):
                         break
                 elif request == "capture":
-                    captured = _vote(now_ms)
+                    captured = vote_window.vote(now_ms)
                     logger.info(f"Shutter pressed — captured gesture: {captured}")
-                    if not _callback_allows_continue(
-                            callback_fn, captured or "NO_GESTURE"):
+                    report = (captured if captured
+                              else f"NO_GESTURE:{latest_guidance}")
+                    if not _callback_allows_continue(callback_fn, report):
                         break
-                    recent_gestures.clear()   # do not reuse a spent pose
+                    vote_window.clear()       # do not reuse a spent pose
 
                 if display:
                     label = current or "None"
@@ -808,17 +946,11 @@ if __name__ == '__main__':
     print("BlindAssist Gesture Control — Enhanced Edition")
     print("=" * 54)
     print("GESTURE REFERENCE:")
-    print("  Open Palm (all 5 fingers)  → MODE_SCAN      (OCR)")
-    print("  Thumbs Up                  → CONFIRM")
+    print("  Open Palm                  → MODE_SCAN      (OCR)")
     print("  Two Fingers (V sign)       → MODE_VOICE")
-    print("  Index Pointing Down        → REPEAT")
-    print("  Fist                       → STOP")
-    print("  Index Pointing Up          → OBJECT_DETECT")
+    print("  Index Finger               → OBJECT_DETECT")
     print("  Three Fingers              → GPS_CHECK")
-    print("  Shaka (pinky + thumb)      → TOGGLE_PRIVACY")
-    print("  OK Sign (circle + 3 up)    → STATUS_CHECK")
-    print("  Hand Swipe Right           → SWIPE_RIGHT (Volume UP)")
-    print("  Hand Swipe Left            → SWIPE_LEFT  (Volume DOWN)")
+    print("  Closed Fist                → STOP")
     print("=" * 54)
     print("Press Q in the display window to quit.")
     detect_gesture(display=True)
