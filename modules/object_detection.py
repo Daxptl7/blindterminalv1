@@ -1,19 +1,26 @@
 """
-object_detection.py — BlindAssist Project (CORRECTED)
-=======================================================
-YOLOv8 streaming inference with generator.
-Processes frames asynchronously. No blocking per-frame.
+object_detection.py — BlindAssist product object announcer
+==========================================================
+Local YOLO inference with USB/Camera Module 3 capture, temporal confirmation,
+bounded speech output, and Raspberry Pi-friendly frame scheduling.
 """
 
 import json
 import cv2
 import os
+import platform
+import select
+import shutil
 import signal
+import subprocess
 import sys
 import logging
+import time
 import numpy as np
 from pathlib import Path
-from collections import Counter, deque
+from collections import deque
+from statistics import median
+from typing import Optional
 
 logger = logging.getLogger("ObjectDetection")
 
@@ -32,8 +39,41 @@ def _load_settings() -> dict:
 
 _settings = _load_settings()
 
-CONFIDENCE = float(_settings.get("yolo_confidence", 0.75))
-INFER_SIZE = int(_settings.get("yolo_imgsz", 640))
+
+def _bounded_float(name: str, default: float, low: float, high: float) -> float:
+    try:
+        value = float(_settings.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return min(max(value, low), high)
+
+
+def _bounded_int(name: str, default: int, low: int, high: int) -> int:
+    try:
+        value = int(_settings.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return min(max(value, low), high)
+
+
+CONFIDENCE = _bounded_float("yolo_confidence", 0.50, 0.05, 0.95)
+INFER_SIZE = _bounded_int("yolo_imgsz", 416, 160, 1280)
+INFERENCE_INTERVAL_S = _bounded_float(
+    "object_detection_interval_s", 0.40, 0.0, 5.0
+)
+STABILITY_WINDOW = _bounded_int("object_detection_stability_window", 5, 1, 30)
+STABILITY_MIN_HITS = _bounded_int(
+    "object_detection_stability_min_hits", 3, 1, STABILITY_WINDOW
+)
+MAX_ANNOUNCED = _bounded_int("object_detection_max_announced", 2, 1, 10)
+CAMERA_BACKEND = str(
+    _settings.get("object_detection_camera_backend", "auto")
+).strip().lower()
+ALLOW_MODEL_DOWNLOAD = bool(_settings.get("yolo_allow_download", False))
+ENHANCE_LOW_LIGHT = bool(
+    _settings.get("object_detection_enhance_low_light", False)
+)
+YOLO_DEVICE = str(_settings.get("yolo_device", "cpu")).strip() or "cpu"
 # Configurable so it can be pointed away from the OCR camera on the Pi, the
 # same way gesture_camera_index already is.
 try:
@@ -42,6 +82,14 @@ except Exception:
     CAMERA_INDEX = None
 
 DISPLAY_WINDOW = bool(_settings.get("object_detection_display", False))
+
+
+class ObjectDetectionSetupError(RuntimeError):
+    """A startup failure that can be explained to a non-technical user."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 # Raspberry Pi exposes ISP/codecs/metadata as /dev/video* nodes. Some open
@@ -90,6 +138,113 @@ def _video_capture(source):
     return cv2.VideoCapture(source)
 
 
+def _find_rpicam_binary() -> Optional[str]:
+    """Return the Raspberry Pi camera video command, including its old name."""
+    return shutil.which("rpicam-vid") or shutil.which("libcamera-vid")
+
+
+class _RpicamMjpegCapture:
+    """Small VideoCapture-compatible adapter around rpicam-vid MJPEG stdout.
+
+    OCR intentionally uses rpicam-still because it needs one high-resolution
+    photograph. Object detection needs a continuous, low-resolution stream.
+    Keeping this adapter command-line based avoids the common Pi problem where
+    Picamera2 is installed for the system Python but cannot be imported from the
+    separate Python 3.11 virtual environment used by MediaPipe.
+    """
+
+    def __init__(self, binary: str, width: int = 640, height: int = 480,
+                 fps: int = 15, camera: int = 0, read_timeout_s: float = 3.0):
+        self._buffer = bytearray()
+        self._timeout = max(float(read_timeout_s), 0.25)
+        self._closed = False
+        command = [
+            binary,
+            "--timeout", "0",
+            "--nopreview",
+            "--codec", "mjpeg",
+            "--width", str(width),
+            "--height", str(height),
+            "--framerate", str(fps),
+            "--quality", "80",
+            "--camera", str(camera),
+            "--output", "-",
+        ]
+        try:
+            self._process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except Exception:
+            self._closed = True
+            raise
+
+    def isOpened(self):
+        return (
+            not self._closed
+            and self._process.poll() is None
+            and self._process.stdout is not None
+        )
+
+    def set(self, *_args):
+        # Resolution and frame rate are fixed when rpicam-vid starts.
+        return False
+
+    def read(self):
+        if not self.isOpened():
+            return False, None
+
+        deadline = time.monotonic() + self._timeout
+        stdout = self._process.stdout
+        while time.monotonic() < deadline and self.isOpened():
+            start = self._buffer.find(b"\xff\xd8")
+            end = self._buffer.find(b"\xff\xd9", start + 2 if start >= 0 else 0)
+            if start >= 0 and end >= 0:
+                jpeg = bytes(self._buffer[start:end + 2])
+                del self._buffer[:end + 2]
+                frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                if frame is not None and frame.size:
+                    return True, frame
+                continue
+
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                ready, _, _ = select.select([stdout], [], [], min(remaining, 0.5))
+            except (OSError, ValueError):
+                return False, None
+            if not ready:
+                continue
+            try:
+                chunk = os.read(stdout.fileno(), 65536)
+            except OSError:
+                return False, None
+            if not chunk:
+                return False, None
+            self._buffer.extend(chunk)
+            # A damaged stream must not grow forever while searching for JPEG
+            # markers. Keep enough for multiple normal 640x480 frames.
+            if len(self._buffer) > 8 * 1024 * 1024:
+                del self._buffer[:-2 * 1024 * 1024]
+        return False, None
+
+    def release(self):
+        if self._closed:
+            return
+        self._closed = True
+        process = self._process
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1.0)
+        if process.stdout is not None:
+            process.stdout.close()
+
+
 def _probe_camera(source):
     cap = _video_capture(source)
     if not cap.isOpened():
@@ -106,7 +261,7 @@ def _probe_camera(source):
     return None
 
 
-def _open_camera(source):
+def _open_opencv_camera(source):
     if source is not None and not isinstance(source, int):
         cap = _probe_camera(source)
         if cap is None:
@@ -127,7 +282,10 @@ def _open_camera(source):
         order.append(source)
     order += [index for index in usb_indices if index not in order]
     order += [index for index in other_indices if index not in order]
-    if not nodes:
+    sysfs_present = sys.platform.startswith("linux") and os.path.isdir(
+        "/sys/class/video4linux"
+    )
+    if not nodes and not sysfs_present:
         order += [index for index in range(0, 11) if index not in order]
 
     previous_level = None
@@ -157,12 +315,60 @@ def _open_camera(source):
             except Exception:
                 pass
 
-    logger.error("No working camera found for object detection.")
+    logger.warning("No working OpenCV camera found for object detection.")
+    return None
+
+
+def _open_rpicam_camera():
+    binary = _find_rpicam_binary()
+    if not binary:
+        return None
+    camera = _bounded_int("object_detection_rpicam_camera", 0, 0, 10)
+    fps = _bounded_int("object_detection_camera_fps", 15, 1, 60)
+    try:
+        cap = _RpicamMjpegCapture(binary, fps=fps, camera=camera)
+    except Exception as exc:
+        logger.warning(f"Could not start Raspberry Pi camera stream: {exc}")
+        return None
+    for _ in range(3):
+        ok, frame = cap.read()
+        if ok and frame is not None and frame.size:
+            logger.info(f"Object detection camera ready through {Path(binary).name}.")
+            return cap
+    cap.release()
+    logger.warning(f"{Path(binary).name} started but returned no usable frames.")
+    return None
+
+
+def _open_camera(source, backend: Optional[str] = None):
+    """Open USB/OpenCV or Camera Module 3, depending on configuration."""
+    selected = (backend or CAMERA_BACKEND or "auto").lower()
+    if selected not in {"auto", "opencv", "usb", "rpicam"}:
+        logger.warning(f"Unknown object_detection_camera_backend={selected!r}; using auto.")
+        selected = "auto"
+
+    if selected in {"auto", "opencv", "usb"}:
+        cap = _open_opencv_camera(source)
+        if cap is not None:
+            return cap
+        if selected != "auto":
+            return None
+
+    if selected in {"auto", "rpicam"}:
+        cap = _open_rpicam_camera()
+        if cap is not None:
+            return cap
+
+    logger.error(
+        "No working camera found for object detection. Check the USB webcam, "
+        "or install rpicam-apps for Camera Module 3."
+    )
     return None
 
 
 # ── MODEL PATH RESOLUTION ──────────────────────────────────
-def _resolve_model_path() -> str:
+def _resolve_model_path(settings: Optional[dict] = None,
+                        search_dirs: Optional[list] = None) -> Optional[str]:
     """Locate YOLO weights that actually exist on this device.
 
     The previous version searched only for `yolov8m.pt`. This Pi ships
@@ -173,7 +379,10 @@ def _resolve_model_path() -> str:
     yolov8 weight present, preferring the smallest (nano is the only size that
     runs at a usable frame rate on a Pi 5 CPU).
     """
-    configured = _settings.get("yolo_model_path")
+    settings = _settings if settings is None else settings
+    configured = os.environ.get("BLINDASSIST_YOLO_MODEL") or settings.get(
+        "yolo_model_path"
+    )
     if configured:
         p = Path(configured)
         if not p.is_absolute():
@@ -182,12 +391,27 @@ def _resolve_model_path() -> str:
             return str(p)
         logger.warning(f"yolo_model_path {configured!r} not found; searching for weights.")
 
-    search_dirs = [BASE_DIR / "models_local", BASE_DIR / "models", BASE_DIR,
-                   Path(__file__).parent]
+    if search_dirs is None:
+        search_dirs = [
+            BASE_DIR / "models_local" / "yolo",
+            BASE_DIR / "models_local",
+            BASE_DIR / "models",
+            BASE_DIR,
+            Path(__file__).parent,
+        ]
     # Nano first: on a Pi 5 CPU, yolov8n runs several times faster than yolov8m
     # and Mode 6 announces objects continuously, so latency matters more than
     # a few points of mAP.
-    for name in ("yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt"):
+    arm = platform.machine().lower() in {"aarch64", "arm64", "armv7l"}
+    optimized = (
+        "yolo11n_ncnn_model", "yolov8n_ncnn_model",
+        "yolo11n.onnx", "yolov8n.onnx",
+    )
+    pytorch = (
+        "yolo11n.pt", "yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt"
+    )
+    names = optimized + pytorch if arm else pytorch + optimized
+    for name in names:
         for directory in search_dirs:
             try:
                 candidate = directory / name
@@ -197,9 +421,20 @@ def _resolve_model_path() -> str:
             except OSError:
                 continue          # e.g. models/ symlink to an unmounted USB
 
-    # Nothing on disk: a bare filename lets ultralytics download it on demand.
-    logger.warning("No YOLO weights found locally; ultralytics will try to download yolov8n.pt.")
-    return "yolov8n.pt"
+    # Product operation must not depend on internet availability. Downloads are
+    # opt-in for development and the preparation script installs the result in
+    # a deterministic local directory.
+    allow_download = bool(settings.get("yolo_allow_download", ALLOW_MODEL_DOWNLOAD))
+    if allow_download:
+        logger.warning(
+            "No YOLO weights found locally; development download is enabled."
+        )
+        return "yolov8n.pt"
+    logger.error(
+        "No local YOLO model found. Run scripts/prepare_object_detection.py "
+        "while online, then retry."
+    )
+    return None
 
 
 MODEL_PATH = _resolve_model_path()
@@ -210,8 +445,17 @@ _model = None
 
 def _get_model():
     """Lazy-load YOLO model on first use to prevent import-time crashes."""
-    global _model
+    global _model, MODEL_PATH
     if _model is None:
+        # A model may have been provisioned after this module was imported.
+        if MODEL_PATH is None:
+            MODEL_PATH = _resolve_model_path()
+        if MODEL_PATH is None:
+            raise ObjectDetectionSetupError(
+                "MODEL_MISSING",
+                "The object detection model is not installed. Run "
+                "scripts/prepare_object_detection.py while connected to the internet."
+            )
         try:
             from ultralytics import YOLO
             logger.info(f"Loading {MODEL_PATH}...")
@@ -219,8 +463,15 @@ def _get_model():
             logger.info("Model ready.")
         except Exception as e:
             logger.error(f"Failed to load YOLO model: {e}")
-            raise
+            raise ObjectDetectionSetupError(
+                "MODEL_LOAD_FAILED", f"The object detection model could not load: {e}"
+            ) from e
     return _model
+
+
+def prepare_model():
+    """Load the model before the live-mode stop listener is armed."""
+    return _get_model()
 
 
 # ── PREPROCESSING ───────────────────────────────────────────
@@ -231,6 +482,113 @@ def preprocess(frame: np.ndarray) -> np.ndarray:
     ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
     ycrcb[:, :, 0] = _clahe.apply(ycrcb[:, :, 0])
     return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
+
+
+def _position_for(center_x: float, width: int) -> str:
+    if center_x < width / 3:
+        return "left"
+    if center_x > 2 * width / 3:
+        return "right"
+    return "center"
+
+
+def _box_area(detection: dict) -> float:
+    try:
+        x1, y1, x2, y2 = detection["box"]
+        return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+
+
+class TemporalDetectionFilter:
+    """Require repeated evidence before an object reaches the speech layer."""
+
+    def __init__(self, window: int = STABILITY_WINDOW,
+                 min_hits: int = STABILITY_MIN_HITS):
+        self.window = max(1, int(window))
+        self.min_hits = min(max(1, int(min_hits)), self.window)
+        self._history = deque(maxlen=self.window)
+
+    @staticmethod
+    def _group(frame_detections):
+        grouped = {}
+        for detection in frame_detections:
+            key = (detection.get("name", "object"),
+                   detection.get("position", "center"))
+            grouped.setdefault(key, []).append(detection)
+        return grouped
+
+    def update(self, detections: list) -> list:
+        grouped_now = self._group(detections)
+        self._history.append(grouped_now)
+        stable = []
+
+        # Requiring the object in the newest frame prevents a stale object from
+        # being spoken after it has left the camera view.
+        for key, current_items in grouped_now.items():
+            counts = [len(frame.get(key, ())) for frame in self._history]
+            if sum(count > 0 for count in counts) < self.min_hits:
+                continue
+            stable_count = max(1, int(round(median(counts))))
+            candidates = sorted(
+                current_items,
+                key=lambda item: (float(item.get("conf", 0.0)), _box_area(item)),
+                reverse=True,
+            )
+            stable.extend(candidates[:stable_count])
+        return stable
+
+
+_DEFAULT_PRIORITY = (
+    "car", "truck", "bus", "train", "motorcycle", "bicycle", "person", "dog",
+    "chair", "bench", "traffic light", "stop sign",
+)
+
+
+def describe_detections(detections: list,
+                        max_items: int = MAX_ANNOUNCED) -> str:
+    """Create a short spatial description suitable for speech."""
+    if not detections:
+        return "I don't see anything clearly."
+
+    configured = _settings.get("object_detection_priority_classes")
+    if isinstance(configured, list):
+        priority = tuple(str(name).lower() for name in configured)
+    else:
+        priority = _DEFAULT_PRIORITY
+    priority_rank = {name: index for index, name in enumerate(priority)}
+
+    grouped = {}
+    for detection in detections:
+        key = (str(detection.get("name", "object")),
+               str(detection.get("position", "center")))
+        group = grouped.setdefault(key, {"items": [], "score": None})
+        group["items"].append(detection)
+
+    def group_score(entry):
+        (name, position), data = entry
+        largest = max((_box_area(item) for item in data["items"]), default=0.0)
+        confidence = max(
+            (float(item.get("conf", 0.0)) for item in data["items"]), default=0.0
+        )
+        return (
+            priority_rank.get(name.lower(), len(priority_rank) + 1),
+            0 if position == "center" else 1,
+            -largest,
+            -confidence,
+        )
+
+    plural = {"person": "people", "mouse": "mice"}
+    phrases = []
+    for (name, position), data in sorted(grouped.items(), key=group_score)[:max_items]:
+        count = len(data["items"])
+        spoken_name = name if count == 1 else plural.get(name, name + "s")
+        where = "ahead" if position == "center" else f"on your {position}"
+        if count == 1:
+            phrases.append(f"a {spoken_name} {where}")
+        else:
+            phrases.append(f"{count} {spoken_name} {where}")
+    return "I see " + ", and ".join(phrases) + "."
 
 
 # ── STREAMING INFERENCE ─────────────────────────────────────
@@ -265,7 +623,10 @@ def stream_detect(source=None, callback=None, max_frames=None, stop_event=None):
 
     logger.info(f"Streaming detection active (display={DISPLAY_WINDOW})")
 
-    frame_count = 0
+    inference_count = 0
+    failed_reads = 0
+    last_inference_at = float("-inf")
+    temporal_filter = TemporalDetectionFilter()
     try:
         while cap.isOpened():
             if stop_event is not None and stop_event.is_set():
@@ -274,29 +635,49 @@ def stream_detect(source=None, callback=None, max_frames=None, stop_event=None):
 
             ret, frame = cap.read()
             if not ret:
-                break
+                failed_reads += 1
+                if failed_reads >= 5:
+                    raise ObjectDetectionSetupError(
+                        "CAMERA_READ_FAILED",
+                        "The object detection camera stopped returning images."
+                    )
+                continue
+            failed_reads = 0
 
+            now = time.monotonic()
+            if now - last_inference_at < INFERENCE_INTERVAL_S:
+                if DISPLAY_WINDOW:
+                    cv2.imshow("Object Detection", frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+                continue
+            last_inference_at = now
+
+            inference_frame = preprocess(frame) if ENHANCE_LOW_LIGHT else frame
             results = model.predict(
-                source=frame,
+                source=inference_frame,
                 conf=CONFIDENCE,
                 imgsz=INFER_SIZE,
                 verbose=False,
-                device='cpu'
+                device=YOLO_DEVICE,
             )
             result = results[0]
             detections = []
 
-            for box in result.boxes:
+            boxes = getattr(result, "boxes", None)
+            for box in ([] if boxes is None else boxes):
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 conf = float(box.conf[0])
                 cls = int(box.cls[0])
                 name = model.names[cls]
+                center_x = (x1 + x2) / 2
 
                 detections.append({
                     'name': name,
                     'conf': conf,
                     'box': (x1, y1, x2, y2),
-                    'center_x': (x1 + x2) / 2
+                    'center_x': center_x,
+                    'position': _position_for(center_x, frame.shape[1]),
                 })
 
                 if DISPLAY_WINDOW:
@@ -305,16 +686,9 @@ def stream_detect(source=None, callback=None, max_frames=None, stop_event=None):
                     cv2.putText(frame, f"{name} {conf:.2f}", (int(x1), int(y1) - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-            h, w = frame.shape[:2]
-            descriptions = []
-            for d in detections:
-                pos = "left" if d['center_x'] < w / 3 else ("right" if d['center_x'] > 2 * w / 3 else "center")
-                descriptions.append(f"a {d['name']} on your {pos}")
-
-            if descriptions:
-                text = "I see: " + ", ".join(descriptions)
-            else:
-                text = "I don't see anything clearly."
+            h, _ = frame.shape[:2]
+            stable_detections = temporal_filter.update(detections)
+            text = describe_detections(stable_detections)
 
             if DISPLAY_WINDOW:
                 cv2.putText(frame, text[:80], (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -325,12 +699,12 @@ def stream_detect(source=None, callback=None, max_frames=None, stop_event=None):
             if callback:
                 # A callback returning False means "stop" — same convention as
                 # gesture_control.detect_gesture.
-                if callback(text, detections) is False:
+                if callback(text, stable_detections) is False:
                     logger.info("Object detection stopped by callback.")
                     break
 
-            frame_count += 1
-            if max_frames is not None and frame_count >= max_frames:
+            inference_count += 1
+            if max_frames is not None and inference_count >= max_frames:
                 break
 
     finally:
@@ -346,22 +720,72 @@ def stream_detect(source=None, callback=None, max_frames=None, stop_event=None):
 def scan_frame(frame: np.ndarray) -> str:
     """Fast single-frame scan for TTS feedback."""
     model = _get_model()
-    processed = preprocess(frame)
-    results = model(processed, conf=CONFIDENCE, imgsz=INFER_SIZE, verbose=False)
+    processed = preprocess(frame) if ENHANCE_LOW_LIGHT else frame
+    results = model.predict(
+        source=processed,
+        conf=CONFIDENCE,
+        imgsz=INFER_SIZE,
+        verbose=False,
+        device=YOLO_DEVICE,
+    )
 
-    h, w = frame.shape[:2]
-    descriptions = []
+    _, w = frame.shape[:2]
+    detections = []
 
-    for box in results[0].boxes:
+    boxes = getattr(results[0], "boxes", None)
+    for box in ([] if boxes is None else boxes):
         x1, y1, x2, y2 = box.xyxy[0].tolist()
         name = model.names[int(box.cls[0])]
         center_x = (x1 + x2) / 2
-        pos = "left" if center_x < w / 3 else ("right" if center_x > 2 * w / 3 else "center")
-        descriptions.append(f"a {name} on your {pos}")
+        detections.append({
+            "name": name,
+            "conf": float(box.conf[0]),
+            "box": (x1, y1, x2, y2),
+            "center_x": center_x,
+            "position": _position_for(center_x, w),
+        })
 
-    if not descriptions:
-        return "I don't see anything clearly."
-    return "I see: " + ", ".join(descriptions)
+    return describe_detections(detections)
+
+
+def diagnostics(probe_camera: bool = False, load_model: bool = False) -> dict:
+    """Return non-destructive readiness information for selftest and support."""
+    global MODEL_PATH
+    MODEL_PATH = _resolve_model_path()
+    model_error = None
+    camera_error = None
+    model_ready = bool(MODEL_PATH and Path(MODEL_PATH).exists())
+    if load_model:
+        try:
+            prepare_model()
+            model_ready = True
+        except Exception as exc:
+            model_error = str(exc)
+
+    camera_ready = None
+    if probe_camera:
+        cap = _open_camera(CAMERA_INDEX)
+        camera_ready = cap is not None
+        if cap is not None:
+            cap.release()
+        else:
+            camera_error = "No USB/OpenCV or rpicam camera returned a frame."
+
+    return {
+        "model_path": MODEL_PATH,
+        "model_ready": model_ready,
+        "model_error": model_error,
+        "camera_backend": CAMERA_BACKEND,
+        "rpicam_available": bool(_find_rpicam_binary()),
+        "camera_ready": camera_ready,
+        "camera_error": camera_error,
+        "confidence": CONFIDENCE,
+        "image_size": INFER_SIZE,
+        "inference_interval_s": INFERENCE_INTERVAL_S,
+        "stability_window": STABILITY_WINDOW,
+        "stability_min_hits": STABILITY_MIN_HITS,
+        "device": YOLO_DEVICE,
+    }
 
 
 def run_detection(callback=None, max_frames=None, stop_event=None):
