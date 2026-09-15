@@ -172,7 +172,8 @@ class MorseSerial:
         so reusing the cached path would fail forever.
         """
         try:
-            self.ser.close()
+            if getattr(self, "ser", None) and getattr(self.ser, "is_open", False):
+                self.ser.close()
         except Exception:
             pass
         try:
@@ -186,6 +187,11 @@ class MorseSerial:
     def _read_loop(self):
         backoff = RECONNECT_BACKOFF_START
         while self.running:
+            if not getattr(self, "ser", None) or not getattr(self.ser, "is_open", False):
+                time.sleep(backoff)
+                backoff = min(backoff * 2, RECONNECT_BACKOFF_MAX)
+                if not self._reconnect():
+                    continue
             try:
                 line = self.ser.readline().decode("utf-8", errors="ignore").strip()
                 if line:
