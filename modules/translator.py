@@ -410,8 +410,13 @@ _DATE_RE = re.compile(
     r"(?<!\d)(?:\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4})(?!\d)"
 )
 _NUMBER_RE = re.compile(r"(?<![\w])[-+]?\d+(?:[.,]\d+)?%?(?![\w])")
-_UNIT_RE = re.compile(
-    r"(?i)(?<![\w])(?:kg|g|mg|km|m|cm|mm|l|ml|°c|°f|rs|inr|₹)(?![\w])"
+_SUFFIX_MEASUREMENT_RE = re.compile(
+    r"(?i)(?<![\w])[-+]?\d+(?:[.,]\d+)?\s*"
+    r"(?P<unit>kg|mg|km|cm|mm|ml|g|m|l|°c|°f)(?![\w])"
+)
+_PREFIX_MEASUREMENT_RE = re.compile(
+    r"(?i)(?<![\w])(?P<unit>rs|inr|₹)\.?\s*"
+    r"[-+]?\d+(?:[.,]\d+)?(?![\w])"
 )
 
 
@@ -420,7 +425,11 @@ def _protected_tokens(text: str) -> Counter:
     dates = _DATE_RE.findall(text)
     without_dates = _DATE_RE.sub(" ", text)
     numbers = _NUMBER_RE.findall(without_dates)
-    units = [unit.lower() for unit in _UNIT_RE.findall(text)]
+    units = [
+        match.group("unit").lower()
+        for pattern in (_SUFFIX_MEASUREMENT_RE, _PREFIX_MEASUREMENT_RE)
+        for match in pattern.finditer(text)
+    ]
     return Counter(dates + numbers + units)
 
 
