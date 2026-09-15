@@ -82,11 +82,16 @@ def find_pico_port():
 
     Honours the "morse_port" setting when present so a Pi with several
     USB-serial gadgets attached can pin the right one; otherwise falls
-    back to the lowest-numbered /dev/ttyACM* node.
+    back to the lowest-numbered /dev/ttyACM*, /dev/ttyUSB*, or macOS usbmodem node.
     """
     if MORSE_PORT:
         return MORSE_PORT
-    candidates = sorted(glob.glob("/dev/ttyACM*"))
+    candidates = (
+        sorted(glob.glob("/dev/ttyACM*"))
+        + sorted(glob.glob("/dev/ttyUSB*"))
+        + sorted(glob.glob("/dev/tty.usbmodem*"))
+        + sorted(glob.glob("/dev/cu.usbmodem*"))
+    )
     if not candidates:
         raise RuntimeError("No Pico W detected. Check the USB cable connection.")
     return candidates[0]
