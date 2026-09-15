@@ -1,1 +1,0 @@
-# RAG Pipeline - Modular Architecture

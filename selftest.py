@@ -179,8 +179,9 @@ def check_voice(record_seconds=0):
 
 
 # ── HARDWARE ────────────────────────────────────────────────
-def check_hardware(settings):
+def check_hardware(settings, probe_vision=False):
     section("Hardware")
+    on_pi = Path("/proc/device-tree/model").exists()
     pico = sorted(Path("/dev").glob("ttyACM*"))
     check("Pico W Morse buttons", bool(pico), str(pico[0]) if pico else "not connected",
           "plug in the Pico W; without it the menu needs a keyboard", required=False)
@@ -193,16 +194,54 @@ def check_hardware(settings):
     check("tesseract OCR", bool(shutil.which("tesseract")), "",
           "sudo apt install tesseract-ocr", required=False)
 
-    model = settings.get("yolo_model_path")
     try:
         from modules import object_detection as od
-        resolved = od.MODEL_PATH
-        exists = Path(resolved).exists()
-        check("YOLO weights present", exists or None,
-              f"{resolved}" + ("" if exists else " (will download on first use)"),
-              f"yolo_model_path={model!r} does not exist", required=False)
+        info = od.diagnostics(
+            probe_camera=probe_vision,
+            load_model=probe_vision,
+        )
+        resolved = info.get("model_path")
+        exists = bool(info.get("model_ready"))
+        check("YOLO model present", exists or None,
+              str(resolved or "not installed"),
+              "run: python3 scripts/prepare_object_detection.py",
+              required=on_pi)
+        check("Object detection optimized for Pi",
+              bool(resolved and ("ncnn" in str(resolved).lower())) or None,
+              str(resolved or "no model"),
+              "run the preparation script with --export-ncnn on the Pi",
+              required=False)
+        if probe_vision:
+            check("Object detection model loads", bool(info.get("model_ready")),
+                  info.get("model_error") or str(resolved or "not installed"),
+                  "reinstall the model and ultralytics")
+            check("Object detection camera returns frames",
+                  bool(info.get("camera_ready")),
+                  info.get("camera_error") or info.get("camera_backend", "auto"),
+                  "check the USB webcam or install/test rpicam-apps",
+                  required=on_pi)
     except Exception as e:
         check("Object detection module", None, str(e), required=False)
+
+    try:
+        from modules import gesture_control as gesture
+        info = gesture.diagnostics(
+            probe_camera=probe_vision,
+            load_backend=probe_vision,
+        )
+        check("MediaPipe for gesture control", bool(info["mediapipe_ready"]),
+              "installed" if info["mediapipe_ready"] else "not installed",
+              "install the project requirements", required=on_pi)
+        check("Gesture hand model/backend", bool(info["backend_ready"]),
+              info.get("backend_error") or str(info.get("backend") or "unavailable"),
+              "run: python3 scripts/prepare_gesture_control.py", required=on_pi)
+        if probe_vision:
+            check("Gesture camera returns frames", bool(info["camera_ready"]),
+                  info.get("camera_error") or info.get("camera_backend", "auto"),
+                  "grant camera permission or check USB/rpicam-apps",
+                  required=on_pi)
+    except Exception as e:
+        check("Gesture control module", None, str(e), required=False)
 
 
 # ── LOCAL LANGUAGE TRANSLATION ─────────────────────────────
@@ -246,6 +285,32 @@ def check_translation():
           f"schema={info.get('cache_schema')}, entries={info.get('cache_entries')}")
 
 
+# ── VERIFIED MATH ──────────────────────────────────────────
+def check_math_solver():
+    section("Math solver")
+    try:
+        from modules import math_solver
+    except Exception as e:
+        check("math solver imports", False, str(e),
+              "install requirements.txt, including SymPy")
+        return
+    info = math_solver.diagnostics()
+    check("SymPy exact solver", bool(info["sympy_ready"]),
+          "available" if info["sympy_ready"] else "not installed",
+          "python3 -m pip install 'sympy>=1.12,<2.0'")
+    probes = (
+        ("Arithmetic verification", "two plus three times four", "14"),
+        ("Equation verification", "two x plus three equals seven", "2"),
+        ("Matrix verification",
+         "matrix two by two row one 1 2 row two 3 4 find determinant", "-2"),
+    )
+    for name, problem, expected in probes:
+        result = math_solver.solve(problem)
+        check(name, result.ok and result.exact == expected,
+              result.exact or result.spoken,
+              "run test_math_solver_product.py to inspect the parser")
+
+
 # ── SUMMARY ─────────────────────────────────────────────────
 def summarize(speak: bool):
     section("Summary")
@@ -286,6 +351,8 @@ def main():
     parser.add_argument("--speak", action="store_true", help="read the summary aloud")
     parser.add_argument("--mic", action="store_true",
                         help="record 3 seconds and report the level")
+    parser.add_argument("--vision", action="store_true",
+                        help="load vision models and capture camera frames")
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
@@ -296,7 +363,8 @@ def main():
     check_audio_output(settings)
     check_voice(record_seconds=3 if args.mic else 0)
     check_translation()
-    check_hardware(settings)
+    check_math_solver()
+    check_hardware(settings, probe_vision=args.vision)
     return summarize(args.speak)
 
 

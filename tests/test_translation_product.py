@@ -52,6 +52,17 @@ class TranslationSafetyTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("output is unchanged", report["reasons"])
 
+    def test_contraction_suffix_is_not_treated_as_measurement_unit(self):
+        passed, report = self.translator.validate_translation(
+            "I'm studying and I'm working",
+            "मैं पढ़ाई कर रहा हूँ और काम कर रहा हूँ",
+            "en",
+            "hi",
+        )
+
+        self.assertTrue(passed, report["reasons"])
+        self.assertTrue(report["protected_tokens_preserved"])
+
     def test_private_request_never_reads_or_writes_cache_or_calls_cloud(self):
         cloud = mock.Mock(return_value="नमस्ते")
         providers = (("google", cloud, True),)

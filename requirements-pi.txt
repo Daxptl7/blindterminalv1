@@ -16,10 +16,6 @@ webrtcvad-wheels
 vosk>=0.3.45
 pocketsphinx>=5.0.0
 
-# Camera & gesture (MediaPipe)
-# Keep below the Tasks-only builds that omit mp.solutions.hands on some platforms.
-mediapipe>=0.10.14,<0.10.35
-
 # Emotion analysis
 librosa>=0.10.1
 scikit-learn>=1.5.0
@@ -41,8 +37,8 @@ pynmea2>=1.19.0
 # of the picamera2 Python module. This avoids a real, common failure:
 # apt-installed picamera2/libcamera Python bindings are compiled for one
 # specific Python version and cannot be imported from a different venv
-# (e.g. a separate Python 3.11 venv created because mediapipe does not
-# yet support Python 3.13). If you ever need picamera2 directly for your
+# (e.g. a venv created with a different Python version from the system
+# bindings). If you ever need picamera2 directly for your
 # own code, install it via apt (sudo apt install python3-picamera2) and
 # create your venv with --system-site-packages using the SAME Python
 # version as your system Python — never pip install it into a

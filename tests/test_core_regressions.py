@@ -29,39 +29,32 @@ class CoreRegressionTests(unittest.TestCase):
         def set_point(index, x, y):
             lm[index] = Point(x, y, 0.0)
 
-        set_point(0, 0.5, 0.9)
-        set_point(2, 0.4, 0.55)
-        set_point(3, 0.4, 0.6)
-        set_point(4, 0.4, 0.65)
-        set_point(5, 0.5, 0.55)
-        set_point(6, 0.5, 0.5)
-        set_point(8, 0.5, 0.65)
-        set_point(10, 0.55, 0.5)
-        set_point(12, 0.55, 0.65)
-        set_point(14, 0.6, 0.5)
-        set_point(16, 0.6, 0.65)
-        set_point(18, 0.65, 0.5)
-        set_point(20, 0.65, 0.65)
+        set_point(0, 0.50, 0.86)
+        # Bent thumb so a fist cannot be confused with a thumbs-up.
+        for index, x, y in ((1, 0.43, 0.74), (2, 0.39, 0.69),
+                            (3, 0.42, 0.72), (4, 0.46, 0.75)):
+            set_point(index, x, y)
 
-        if gesture == "open_palm":
-            set_point(3, 0.34, 0.45)
-            set_point(4, 0.22, 0.35)
-            for tip, pip, x in ((8, 6, 0.48), (12, 10, 0.54), (16, 14, 0.6), (20, 18, 0.66)):
-                set_point(pip, x, 0.45)
-                set_point(tip, x, 0.2)
-        elif gesture == "thumbs_up":
-            set_point(2, 0.4, 0.55)
-            set_point(3, 0.4, 0.4)
-            set_point(4, 0.4, 0.22)
-        elif gesture == "two_fingers":
-            set_point(6, 0.48, 0.45)
-            set_point(8, 0.48, 0.2)
-            set_point(10, 0.55, 0.45)
-            set_point(12, 0.55, 0.2)
-        elif gesture == "point_down":
-            set_point(5, 0.5, 0.45)
-            set_point(6, 0.5, 0.55)
-            set_point(8, 0.5, 0.75)
+        chains = ((5, 6, 7, 8), (9, 10, 11, 12),
+                  (13, 14, 15, 16), (17, 18, 19, 20))
+        extended_by_gesture = {
+            "open_palm": (True, True, True, True),
+            "two_fingers": (True, True, False, False),
+            "one_finger": (True, False, False, False),
+            "three_fingers": (True, True, True, False),
+            "fist": (False, False, False, False),
+        }
+        states = extended_by_gesture[gesture]
+        for chain, extended, x in zip(chains, states, (0.36, 0.46, 0.56, 0.66)):
+            mcp, pip, dip, tip = chain
+            set_point(mcp, x, 0.62)
+            set_point(pip, x, 0.48)
+            if extended:
+                set_point(dip, x, 0.34)
+                set_point(tip, x, 0.20)
+            else:
+                set_point(dip, x + 0.08, 0.54)
+                set_point(tip, x + 0.09, 0.65)
 
         return lm
 
@@ -69,10 +62,10 @@ class CoreRegressionTests(unittest.TestCase):
         gesture = importlib.import_module("modules.gesture_control")
 
         self.assertEqual(gesture.classify_gesture(self._hand("open_palm")), "MODE_SCAN")
-        self.assertEqual(gesture.classify_gesture(self._hand("thumbs_up")), "CONFIRM")
         self.assertEqual(gesture.classify_gesture(self._hand("two_fingers")), "MODE_VOICE")
         self.assertEqual(gesture.classify_gesture(self._hand("fist")), "STOP")
-        self.assertEqual(gesture.classify_gesture(self._hand("point_down")), "REPEAT")
+        self.assertEqual(gesture.classify_gesture(self._hand("one_finger")), "OBJECT_DETECT")
+        self.assertEqual(gesture.classify_gesture(self._hand("three_fingers")), "GPS_CHECK")
 
     def test_gesture_stop_callback_can_end_detection_loop(self):
         gesture = importlib.import_module("modules.gesture_control")
