@@ -1582,13 +1582,13 @@ def mode_math_solver():
         _speak("The verified math solver is not available. Check that SymPy is installed.")
         return
 
-    _speak("Math Solver. Press 1 for voice input, or 2 to type the problem on the buttons.")
-    method = None
-    if _morse_serial_singleton is not None:
-        digit = _morse_serial_singleton.read_menu_digit(timeout=20)
-        method = digit
-    else:
-        method = _keyboard_input("1=voice, 2=type: ", default=None)
+    print("\n[Mode 9 — Math Solver]  input method")
+    print("  Button 1 → Voice input")
+    print("  Button 2 → Type problem on buttons")
+    method = _select_with_buttons(
+        ("1", "2"),
+        "Math Solver. Press button 1 for voice input, or button 2 to type the problem on the buttons.",
+    )
 
     problem = ""
     if method == '1':
