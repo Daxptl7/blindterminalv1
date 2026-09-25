@@ -1304,6 +1304,14 @@ def open_camera() -> bool:
 
 
 def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
+    from modules.processing_feedback import ProcessingCancelled
+    try:
+        return _scan_and_read(lang, speak_fn, stop_check)
+    except ProcessingCancelled:
+        return "OCR scan cancelled."
+
+
+def _scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
     """
     Captures one frame and returns the extracted text.
 
@@ -1338,6 +1346,29 @@ def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
         logger.error(f"Frame conversion error: {e}")
         return "Image processing error."
 
+    from modules.processing_feedback import run_with_feedback, ProcessingCancelled
+
+    def announce(message):
+        if stop_check and stop_check():
+            raise ProcessingCancelled()
+        if speak_fn:
+            speak_fn(message)
+
+    def extract(engine, local=False):
+        message = ("Still reading on this device. Local processing can take longer. Please wait."
+                   if local else "Still waiting for the online reader. Please wait.")
+        try:
+            return run_with_feedback(
+                lambda: engine.extract_text(pil_image, lang=lang),
+                speak_fn, stop_check, message=message)
+        except ProcessingCancelled:
+            raise
+        except Exception:
+            if not local:
+                raise
+            logger.exception("Local reader failed")
+            return "OCR error: Local reader failed."
+
     engine_name = str(_config.get("ocr_engine", "auto")).lower()
 
     # ── Helper: detect Gemini "I see no text" style answers ──────────
@@ -1363,7 +1394,7 @@ def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
 
     def _try_gemini() -> str:
         try:
-            gemini_text = _gemini_engine.extract_text(pil_image, lang=lang)
+            gemini_text = extract(_gemini_engine)
             if _is_usable(gemini_text):
                 min_words = _config_int("ocr_gemini_min_words", 12, 1, 200)
                 word_count = len(re.findall(r"\S+", gemini_text))
@@ -1383,13 +1414,30 @@ def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
                 )
             else:
                 logger.info(f"Gemini found no usable text: {gemini_text!r}")
+        except ProcessingCancelled:
+            raise
         except Exception as e:
             logger.warning(f"Gemini OCR unavailable, falling back locally: {e}")
+            announce("The online reader failed. " + (
+                "Using the local reading result." if tess_ok else
+                "I will use the reader on this device. Local processing may take longer. Please wait."))
+            return ""
+        announce("The online reader could not read enough text. " + (
+            "Using the local reading result." if tess_ok else
+            "I will try the reader on this device. This may take longer."))
         return ""
 
     def _try_tesseract() -> str:
         nonlocal tess_text, tess_ok
-        tess_text = _tesseract_engine.extract_text(pil_image, lang=lang)
+        if not (gemini_first and _config.get("gemini_api_key") and engine_name in ("auto", "gemini")):
+            announce("Reading on this device. Please wait.")
+        try:
+            tess_text = extract(_tesseract_engine, local=True)
+        except ProcessingCancelled:
+            raise
+        except Exception as error:
+            logger.warning("Local OCR failed: %s", error)
+            tess_text = "OCR error: Local reader failed."
         tess_ok = _is_usable(tess_text)
         return tess_text
 
@@ -1411,6 +1459,8 @@ def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
 
     # Optional cloud second look for users who prefer fast local-first scans.
     if engine_name in ("auto", "gemini") and _config.get("gemini_api_key") and not gemini_first:
+        announce("Checking the text with the online reader." if tess_ok else
+                 "The local reader could not read the text. Trying the online reader.")
         gemini_text = _try_gemini()
         if gemini_text:
             return gemini_text
@@ -1420,10 +1470,12 @@ def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
             return tess_text
         if _config.get("ocr_surya_fallback", False):
             logger.warning(f"Tesseract OCR did not produce usable text, trying Surya: {tess_text}")
-            return _engine.extract_text(pil_image, lang=lang)
+            announce("The first local reader could not read the text. Trying another local reader. Please wait.")
+            return extract(_engine, local=True)
         return tess_text
 
-    return _engine.extract_text(pil_image, lang=lang)
+    announce("Reading on this device. Please wait.")
+    return extract(_engine, local=True)
 
 
 def release_camera():

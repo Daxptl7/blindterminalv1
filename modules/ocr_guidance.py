@@ -183,7 +183,10 @@ def guided_capture(camera, speak, stop_check, config):
                 return None, "OCR scan cancelled."
             if ready:
                 camera.stop_preview()
-                frame = camera.capture(stop_check=stopped)
+                from modules.processing_feedback import run_with_feedback
+                frame = run_with_feedback(
+                    lambda: camera.capture(stop_check=stopped), speak, stopped,
+                    message="Still capturing the image. Please hold steady.")
                 if stopped():
                     return None, "OCR scan cancelled."
                 if frame is None:
@@ -198,14 +201,7 @@ def guided_capture(camera, speak, stop_check, config):
                         speak("Reading the visible text. Some text may be outside the image.")
                     speak("Reading now.")
                     return frame, ""
-                if fallback:
-                    return None, "OCR guidance unavailable. The image is too dark or blurry. Please adjust the lighting and try again."
-                speak(check.message)
-                quiet_frames = 0
-                analyzer = FrameAnalyzer(config)
-                gate = GuidanceGate(config)
-                if not camera.start_preview():
-                    return None, "OCR guidance unavailable. Camera preview could not restart."
+                return None, "OCR guidance unavailable. I could not capture clear text. Returning to the menu."
             time.sleep(.15)
         return None, "OCR positioning timed out."
     finally:

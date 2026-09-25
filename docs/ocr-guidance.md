@@ -11,11 +11,21 @@ of that view produces “Move the camera slightly right.” When no page boundar
 can be located, guidance asks the user to search rather than inventing a direction.
 
 Press Button 3 three times (or the configured voice stop count) to cancel.
-On a development terminal, Ctrl-C cancels positioning. After 60 seconds, Button 1
-retries and Button 2 cancels; no response for 15 seconds also returns to the menu.
-Terminal retry uses 1 / Enter. A capture subprocess or an in-flight OCR request
-must finish or hit its existing timeout before cancellation returns; cancelled
-results are discarded before document playback.
+On a development terminal, Ctrl-C cancels positioning. Each invocation makes one
+scan attempt. Timeout or a rejected still returns to the menu, without restarting
+preview or offering an automatic retry loop. Select OCR again to scan another page.
+An explanation runs only after an explicit yes; silence does not start another task.
+
+Slow image capture and OCR operations speak a status update after 8 seconds,
+then at most one more after another 20 seconds. Completion stops updates before
+document playback. An online failure is announced as a service failure, followed
+by an explanation that local processing may take longer. An unreadable response
+is described separately from a service failure. Progress messages contain no
+recognized document text; normal privacy routing still controls document playback.
+
+A capture subprocess or in-flight OCR request must finish or hit its existing
+timeout before cancellation returns; cancelled results are discarded and further
+status speech is suppressed.
 
 ## Camera support
 
@@ -51,7 +61,7 @@ example settings files include all options. Most useful settings:
 | `ocr_guidance_auto_capture_s` | 10 | Try OCR after brief guidance despite uncertain framing |
 | `ocr_guidance_rotation` | 0 | Clockwise mount correction: 0, 90, 180, 270 |
 | `ocr_guidance_mirror` | false | Undo a mirrored camera view after rotation |
-| `ocr_guidance_timeout_s` | 60 | Positioning time before retry/cancel |
+| `ocr_guidance_timeout_s` | 60 | Positioning time before returning to menu |
 | `ocr_guidance_prompt_interval_s` | 3 | Minimum interval between corrective prompts |
 | `ocr_guidance_stable_frames` | 4 | Consecutive acceptable observations before capture |
 | `ocr_guidance_center_tolerance` | 0.12 | Allowed center offset relative to frame dimensions |
@@ -72,7 +82,7 @@ light, movement, blur, and a page completely outside the frame. Confirm a stable
 page captures automatically and the captured photograph contains all its edges.
 Repeat with portrait/landscape pages, small print and different backgrounds.
 Check Button 3 cancellation during prompts, positioning and still capture; then
-check timeout/retry, unplugged camera, and confidential document playback.
+check timeout returns to menu, unplugged camera, and confidential document playback.
 
 These are conservative page/text-shape heuristics, not a trained document detector.
 Blank rectangles do not trigger immediate capture, but the bounded fallback may

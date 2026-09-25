@@ -353,38 +353,27 @@ def mode_ocr_scan():
         return
 
     try:
-        while True:
-            _drain_button_messages()
-            stop_check, stop_watcher = _button3_stop_signal()
-            try:
-                if stop_check is not None:
-                    _speak(f"Press button 3 {_STOP_PRESSES} times to cancel scanning.", block=True)
-                def guidance_speak(message):
-                    # Wait for each short prompt; the preview reader keeps only
-                    # the newest image while speech plays.
-                    _speak(message, block=True)
-                text = _modules["ocr"].scan_and_read(
-                    lang='eng', speak_fn=guidance_speak, stop_check=stop_check)
-                if stop_check and stop_check():
-                    text = "OCR scan cancelled."
-            except KeyboardInterrupt:
+        _drain_button_messages()
+        stop_check, stop_watcher = _button3_stop_signal()
+        try:
+            if stop_check is not None:
+                _speak(f"Press button 3 {_STOP_PRESSES} times to cancel scanning.", block=True)
+            def guidance_speak(message):
+                # Wait for each short prompt; the preview reader keeps only
+                # the newest image while speech plays.
+                _speak(message, block=True)
+            text = _modules["ocr"].scan_and_read(
+                lang='eng', speak_fn=guidance_speak, stop_check=stop_check)
+            if stop_check and stop_check():
                 text = "OCR scan cancelled."
-            except Exception:
-                logger.exception("Guided OCR capture failed")
-                text = "OCR guidance unavailable. Please check the camera and try again."
-            finally:
-                stop_watcher()
-            if text != "OCR positioning timed out.":
-                break
-            _speak("Positioning timed out. Press button 1 to retry or button 2 to cancel.", block=True)
-            if _morse_serial_singleton is not None:
-                choice = _morse_serial_singleton.wait_for_raw_button(timeout=15)
-            else:
-                choice = _keyboard_input("1 to retry, Enter to cancel: ", default="")
-            if str(choice) != "1":
-                _speak("OCR scan cancelled.")
-                return
-        if text and text.startswith(("OCR scan cancelled", "OCR guidance unavailable")):
+        except KeyboardInterrupt:
+            text = "OCR scan cancelled."
+        except Exception:
+            logger.exception("Guided OCR capture failed")
+            text = "OCR guidance unavailable. Please check the camera and try again."
+        finally:
+            stop_watcher()
+        if text and text.startswith(("OCR scan cancelled", "OCR guidance unavailable", "OCR positioning timed out")):
             _speak(text)
             return
 
@@ -404,7 +393,10 @@ def mode_ocr_scan():
             "ocr unavailable", "no text detected", "ocr error",
         )
         if not text or any(marker in text.lower() for marker in failure_markers):
-            _speak("I could not read the text clearly. Please try again.")
+            if text and text.lower().startswith(("ocr unavailable", "ocr error")):
+                _speak("The reader could not complete processing. Returning to the menu.")
+            else:
+                _speak("I could not read the text clearly. Returning to the menu.")
             return
 
         # —— PRIVACY ROUTING (FIX 1 & FIX 2) ——————————————————
@@ -449,11 +441,11 @@ def mode_ocr_scan():
         # Original code used input() which blocks forever on a headless device
         # with no keyboard. Now listens to the physical Pico W buttons first
         # (Button 1 = yes, Button 2 = no), with a 4-second window, then
-        # falls back to the microphone, and finally defaults to "yes" so a
+        # falls back to the microphone, and finally defaults to "no" so a
         # blind user never gets silently stuck waiting for a keypress.
         _speak("Would you like to explain this? Press 1 for yes, 2 for no.")
 
-        response = "yes"   # Failsafe: ensures it never crashes even if mic fails
+        response = "no"    # Explanation runs only after an explicit request.
 
         try:
             # 1. Wait 4 seconds for a button press (Button 1 = yes, Button 2 = no)
@@ -470,14 +462,14 @@ def mode_ocr_scan():
                         response = spoken.lower()
             else:
                 # Keyboard fallback for laptop/development use
-                kb = (_keyboard_input("[Y/N/1/2/Enter=Yes]: ", default="") or "").lower()
-                if kb in ("n", "no", "2"):
-                    response = "no"
+                kb = (_keyboard_input("[Y/N/1/2/Enter=No]: ", default="") or "").lower()
+                if kb in ("y", "yes", "1"):
+                    response = "yes"
 
         except Exception as e:
             logger.warning(f"Mic/Button error while asking for explanation: {e}")
 
-        if response not in ("no", "n", "2"):
+        if response in ("yes", "y", "1"):
             _speak("Analyzing...")
             if _has("ai_query"):
                 answer = _modules["ai_query"].ask_ai(

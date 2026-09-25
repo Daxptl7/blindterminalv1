@@ -106,13 +106,14 @@ class CaptureTests(unittest.TestCase):
         camera.stop_preview.assert_called()
 
     @mock.patch('modules.ocr_guidance.time.sleep')
-    def test_rejected_still_restarts_preview(self, _):
+    def test_rejected_still_ends_single_attempt(self, _):
         camera = self.camera()
         camera.capture.side_effect = [page(text=False), page()]
         frame, status = guided_capture(camera, mock.Mock(), None, {})
-        self.assertEqual(status, '')
-        self.assertIsNotNone(frame)
-        self.assertEqual(camera.start_preview.call_count, 2)
+        self.assertIn('could not capture', status)
+        self.assertIsNone(frame)
+        camera.start_preview.assert_called_once()
+        camera.capture.assert_called_once()
 
     @mock.patch('modules.ocr_guidance.time.sleep')
     def test_uncertain_framing_gets_bounded_ocr_attempt(self, _):
@@ -228,10 +229,10 @@ class ModeTests(unittest.TestCase):
         module.release_camera.assert_called_once()
         cancel.assert_called_once()
 
-    def test_timeout_retry_starts_new_scan(self):
+    def test_timeout_ends_without_retry(self):
         module, speak, cancel = self.mode(['OCR positioning timed out.', 'OCR scan cancelled.'])
-        self.assertEqual(module.scan_and_read.call_count, 2)
-        self.assertEqual(cancel.call_count, 2)
+        self.assertEqual(module.scan_and_read.call_count, 1)
+        self.assertEqual(cancel.call_count, 1)
         module.release_camera.assert_called_once()
 
 
