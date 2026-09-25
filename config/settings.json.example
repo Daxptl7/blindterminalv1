@@ -1,4 +1,5 @@
 {
+  "morse_menu_symbol_gap_seconds": 5,
   "ocr_guidance_enabled": true,
   "ocr_guidance_timeout_s": 60,
   "ocr_guidance_prompt_interval_s": 3,

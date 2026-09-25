@@ -1714,7 +1714,9 @@ def _get_menu_choice():
     available (e.g. laptop development).
     """
     if _morse_serial_singleton is not None:
-        _speak("Tap a digit 1 through 9 to choose a mode, or 0 to shut down.")
+        _speak("Enter a five-press Morse digit. Button 1 is dot; button 2 is dash. "
+               "For scan, press button 1 once, then button 2 four times. "
+               "Keep pauses under five seconds.")
         return _morse_serial_singleton.read_menu_digit(timeout=120)
     return _keyboard_input("Mode (1-9, 0=quit): ", default=None)
 

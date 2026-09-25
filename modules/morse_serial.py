@@ -305,38 +305,53 @@ class MorseSerial:
                     return letter
 
     def read_menu_digit(self, timeout=None):
-        """
-        MENU SELECTION (hands-free): waits for one Morse DIGIT (0-9) and
-        returns it as a single-character string, or None on timeout.
+        """Read five raw dot/dash presses with a forgiving menu-only gap.
 
-        Why digits and not letters: every Morse digit is exactly 5
-        dots/dashes long; every Morse letter is 1-4 symbols long. That
-        length difference means a digit can never be mistaken for a
-        letter (or vice versa) — there is no possible ambiguity between
-        "pick a menu item" and "type a word", even in principle. If the
-        user accidentally taps out a letter while at the menu (e.g. a
-        stray press), it is simply ignored and we keep waiting, instead
-        of guessing at an unintended selection.
+        Firmware's 1.5-second letter timeout remains useful when typing text,
+        but must not split a slowly entered menu digit into ignored letters.
+        Legacy firmware sending only LETTER messages remains supported.
         """
-        deadline = time.time() + timeout if timeout else None
+        digits = {"-----": "0", ".----": "1", "..---": "2", "...--": "3",
+                  "....-": "4", ".....": "5", "-....": "6", "--...": "7",
+                  "---..": "8", "----.": "9"}
+        try:
+            gap = max(2.0, min(30.0, float(_settings.get("morse_menu_symbol_gap_seconds", 5))))
+        except (TypeError, ValueError):
+            gap = 5.0
+        deadline = time.monotonic() + timeout if timeout else None
+        symbols = ""
+        last_symbol = None
+        raw_seen = False
         while True:
-            if deadline is not None:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    return None
-                msg = self.get_message(timeout=remaining)
-            else:
-                msg = self.get_message(timeout=1)
-            if msg is None:
-                if deadline is None:
-                    continue
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
                 return None
-            if msg.startswith("LETTER:"):
-                char = msg.split(":")[1]
-                if char.isdigit():
+            msg = self.get_message(timeout=max(.01, deadline-now) if deadline else 1)
+            if msg is None:
+                if deadline is not None:
+                    return None
+                continue
+            now = time.monotonic()
+            if msg in ("RAW:1", "RAW:2"):
+                raw_seen = True
+                if last_symbol is not None and now-last_symbol > gap:
+                    symbols = ""
+                symbols += "." if msg == "RAW:1" else "-"
+                last_symbol = now
+                if len(symbols) == 5:
+                    digit = digits.get(symbols)
+                    symbols = ""
+                    if digit is not None:
+                        return digit
+            elif msg == "BACKSPACE":
+                symbols = symbols[:-1]
+            elif msg == "READY":
+                symbols = ""
+                last_symbol = None
+            elif msg.startswith("LETTER:") and not raw_seen:
+                char = msg.split(":", 1)[1]
+                if char in tuple("0123456789"):
                     return char
-                # a real letter was tapped at the menu — ignore it and
-                # keep listening instead of treating it as a selection.
 
     def wait_for_confirm(self, timeout=5):
         """
