@@ -27,8 +27,18 @@ dependency is added. Missing or stalled preview produces a spoken error.
 The stream options follow the [Raspberry Pi camera documentation](https://www.raspberrypi.com/documentation/computers/camera_software.html).
 
 The final still is checked again because video and still sensor modes can have
-different fields of view. A rejected still restarts guidance within the original
-time limit. Short prompts play serially, so old corrections do not queue up.
+different fields of view. Readable text is accepted even when the paper touches
+the frame boundary or its outline cannot be found. Only several text-like marks
+near an edge trigger a possible clipping warning; paper edges alone do not.
+Each corrective instruction is spoken once per positioning attempt.
+
+After about 10 seconds, the scanner attempts full-resolution OCR on a steady,
+adequately lit view even when framing or text-shape detection remains uncertain.
+OCR determines whether text is actually readable. The final still's framing alone
+cannot restart guidance when text-like detail is present. This prioritizes reading
+the visible text; it does not guarantee that the complete page is in view.
+Dark, moving or detected blurry previews still require correction. Short prompts
+play serially, so old corrections do not queue up.
 
 ## Configuration
 
@@ -38,6 +48,7 @@ example settings files include all options. Most useful settings:
 | Key | Default | Purpose |
 | --- | --- | --- |
 | `ocr_guidance_enabled` | true | Enable guided positioning in OCR mode |
+| `ocr_guidance_auto_capture_s` | 10 | Try OCR after brief guidance despite uncertain framing |
 | `ocr_guidance_rotation` | 0 | Clockwise mount correction: 0, 90, 180, 270 |
 | `ocr_guidance_mirror` | false | Undo a mirrored camera view after rotation |
 | `ocr_guidance_timeout_s` | 60 | Positioning time before retry/cancel |
@@ -64,8 +75,8 @@ Check Button 3 cancellation during prompts, positioning and still capture; then
 check timeout/retry, unplugged camera, and confidential document playback.
 
 These are conservative page/text-shape heuristics, not a trained document detector.
-Blank rectangles should not trigger capture, but textured rectangles may resemble
-text. Boundaries can be missed on low-contrast backgrounds, curved books, strong
+Blank rectangles do not trigger immediate capture, but the bounded fallback may
+attempt OCR on them; textured rectangles may resemble text. Boundaries can be missed on low-contrast backgrounds, curved books, strong
 perspective, or with multiple pages. Complete-page framing also cannot guarantee
 that very small print is legible. The actual Pi camera and mounting must be used
 to tune thresholds and validate usability with a blind user before deployment.

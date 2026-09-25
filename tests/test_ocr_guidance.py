@@ -34,12 +34,29 @@ class FramingTests(unittest.TestCase):
 
     def test_distance_and_darkness(self):
         self.assertEqual(self.assess(page(235, 150, 170, 180)), 'closer')
-        self.assertEqual(self.assess(page(160, 5, 320, 470)), 'clipped')
+        # Paper edges are not evidence that printed text is cut off.
+        self.assertEqual(self.assess(page(160, 5, 320, 470)), 'ready')
         self.assertEqual(self.assess(np.zeros((480, 640, 3), np.uint8)), 'dark')
 
     def test_blank_and_missing_pages_never_ready(self):
         self.assertNotEqual(self.assess(page(text=False)), 'ready')
         self.assertEqual(self.assess(np.full((480, 640, 3), 150, np.uint8)), 'search')
+
+    def test_text_without_visible_paper_boundary_can_capture(self):
+        frame = np.full((480, 640, 3), 245, np.uint8)
+        for y in range(80, 400, 24):
+            cv2.putText(frame, 'A clear readable line of text', (80, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, .6, (20, 20, 20), 1)
+        self.assertEqual(self.assess(frame), 'ready')
+        # One stray edge mark must not cause a move-away loop.
+        cv2.putText(frame, 'X', (0, 35), cv2.FONT_HERSHEY_SIMPLEX, .5, (20, 20, 20), 1)
+        self.assertEqual(self.assess(frame), 'ready')
+
+    def test_same_instruction_is_not_repeated_forever(self):
+        gate = GuidanceGate({})
+        assessment = Assessment('clipped', 'Move back')
+        announcements = [gate.update(assessment, now)[1] for now in range(30)]
+        self.assertEqual(sum(announcements), 1)
 
     def test_motion(self):
         analyzer = FrameAnalyzer()
@@ -96,6 +113,40 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(status, '')
         self.assertIsNotNone(frame)
         self.assertEqual(camera.start_preview.call_count, 2)
+
+    @mock.patch('modules.ocr_guidance.time.sleep')
+    def test_uncertain_framing_gets_bounded_ocr_attempt(self, _):
+        import itertools
+        camera = self.camera()
+        camera.preview_frame.return_value = page(30, 90, 240, 300)
+        camera.capture.return_value = camera.preview_frame.return_value
+        with mock.patch('modules.ocr_guidance.time.monotonic', side_effect=itertools.count()):
+            frame, status = guided_capture(camera, mock.Mock(), None,
+                                           {'ocr_guidance_auto_capture_s': 2})
+        self.assertIsNotNone(frame)
+        self.assertEqual(status, '')
+        camera.capture.assert_called_once()
+        camera.start_preview.assert_called_once()
+
+    @mock.patch('modules.ocr_guidance.time.sleep')
+    def test_still_crop_difference_does_not_restart_framing(self, _):
+        camera = self.camera()
+        camera.capture.return_value = page(30, 90, 240, 300)
+        frame, status = guided_capture(camera, mock.Mock(), None, {})
+        self.assertIsNotNone(frame)
+        self.assertEqual(status, '')
+        camera.start_preview.assert_called_once()
+
+    @mock.patch('modules.ocr_guidance.time.sleep')
+    def test_auto_attempt_does_not_capture_dark_view(self, _):
+        import itertools
+        camera = self.camera()
+        camera.preview_frame.return_value = np.zeros((480, 640, 3), np.uint8)
+        with mock.patch('modules.ocr_guidance.time.monotonic', side_effect=itertools.count()):
+            frame, status = guided_capture(camera, mock.Mock(), None,
+                    {'ocr_guidance_auto_capture_s': 2, 'ocr_guidance_timeout_s': 10})
+        self.assertIsNone(frame)
+        camera.capture.assert_not_called()
 
     def test_preview_failure(self):
         camera = self.camera()

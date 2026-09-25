@@ -1,7 +1,7 @@
 """Local page framing and stable, rate-limited spoken OCR guidance.
 
-Heuristics deliberately require a visible page boundary and text-like marks;
-a missing boundary is not evidence of the direction of an off-screen page.
+Framing is advisory: page edges are not text edges. A bounded guidance
+period is followed by a still-image OCR attempt instead of endless corrections.
 """
 from dataclasses import dataclass
 import time
@@ -11,6 +11,7 @@ import numpy as np
 
 DEFAULTS = {
     "ocr_guidance_enabled": True,
+    "ocr_guidance_auto_capture_s": 10,
     "ocr_guidance_timeout_s": 60,
     "ocr_guidance_prompt_interval_s": 3,
     "ocr_guidance_stable_frames": 4,
@@ -29,6 +30,7 @@ DEFAULTS = {
 class Assessment:
     code: str
     message: str
+    readable: bool = False
 
 
 def number(config, key, low, high):
@@ -81,34 +83,37 @@ class FrameAnalyzer:
         count, _, stats, _ = cv2.connectedComponentsWithStats(ink)
         marks = [s for s in stats[1:count] if 2 <= s[2] <= w * .08
                  and 3 <= s[3] <= h * .10 and 4 <= s[4] <= h * w * .003]
-        if page is None:
-            margin = number(cfg, "ocr_guidance_edge_margin", .005, .1)
-            if len(marks) >= 8 and any(x < w * margin or y < h * margin or
-                    x + bw > w * (1-margin) or y + bh > h * (1-margin)
-                    for x, y, bw, bh, _ in marks):
-                return Assessment("clipped", "Text may be cut off. Move the camera farther away.")
-            return Assessment("search", "I cannot find the whole page. Slowly move the camera to locate it.")
-        x, y, bw, bh = cv2.boundingRect(page)
+        if motion > number(cfg, "ocr_guidance_max_motion", 1, 80):
+            return Assessment("moving", "Hold the camera steady.")
+        # A paper edge near the border is normal. Only multiple text-like
+        # components near that border justify a possible clipping warning.
         margin = number(cfg, "ocr_guidance_edge_margin", .005, .1)
-        if min(x / w, y / h, (w-x-bw) / w, (h-y-bh) / h) < margin:
-            return Assessment("clipped", "Page edges may be cut off. Move the camera farther away.")
+        edge_marks = [s for s in marks if s[0] < w * margin or s[1] < h * margin
+                      or s[0]+s[2] > w*(1-margin) or s[1]+s[3] > h*(1-margin)]
+        clipped_text = len(edge_marks) >= max(4, len(marks) * .15)
+        if page is None:
+            x, y, bw, bh = 0, 0, w, h
+        else:
+            x, y, bw, bh = cv2.boundingRect(page)
+        inside = [s for s in marks if x < s[0] < x+bw and y < s[1] < y+bh]
+        if len(inside) < 8:
+            return Assessment("search", "Point the camera toward the printed text and hold steady.")
+        roi = gray[y+5:y+bh-5, x+5:x+bw-5]
+        if roi.size and cv2.Laplacian(roi, cv2.CV_64F).var() < number(cfg, "ocr_guidance_min_sharpness", 1, 1000):
+            return Assessment("blur", "Text is blurry. Hold steady while the camera focuses.")
+        if clipped_text:
+            return Assessment("clipped", "Some text may be cut off. Move back slightly if possible.", True)
+        if page is None:
+            return Assessment("ready", "Text found. Hold steady.", True)
+
         dx, dy = (x + bw/2) / w - .5, (y + bh/2) / h - .5
         tolerance = number(cfg, "ocr_guidance_center_tolerance", .03, .3)
         if max(abs(dx), abs(dy)) > tolerance:
             direction = ("right" if dx > 0 else "left") if abs(dx) >= abs(dy) else ("down" if dy > 0 else "up")
-            return Assessment(direction, f"Move the camera slightly {direction}.")
+            return Assessment(direction, f"Move the camera slightly {direction}.", True)
         if max(bw/w, bh/h) < number(cfg, "ocr_guidance_min_fill", .2, .9):
-            return Assessment("closer", "Move the camera closer.")
-        inside = [s for s in marks if x < s[0] < x+bw and y < s[1] < y+bh]
-        if len(inside) < 8:
-            return Assessment("text", "I cannot see clear text. Check that the camera faces the printed side.")
-        if motion > number(cfg, "ocr_guidance_max_motion", 1, 80):
-            return Assessment("moving", "Hold the camera steady.")
-        # Exclude the strong page boundary from the sharpness estimate.
-        roi = gray[y+5:y+bh-5, x+5:x+bw-5]
-        if cv2.Laplacian(roi, cv2.CV_64F).var() < number(cfg, "ocr_guidance_min_sharpness", 1, 1000):
-            return Assessment("blur", "Text is blurry. Hold steady while the camera focuses.")
-        return Assessment("ready", "Page positioned. Hold steady.")
+            return Assessment("closer", "Move the camera closer.", True)
+        return Assessment("ready", "Text found. Hold steady.", True)
 
 
 class GuidanceGate:
@@ -118,26 +123,33 @@ class GuidanceGate:
         self.code = None
         self.count = 0
         self.last_spoken = -float("inf")
+        self.spoken_codes = set()
 
     def update(self, assessment, now):
         self.count = self.count + 1 if assessment.code == self.code else 1
         self.code = assessment.code
         ready = assessment.code == "ready" and self.count >= self.required
-        speak = self.count >= 2 and now - self.last_spoken >= self.interval
+        speak = (self.count >= 2 and now - self.last_spoken >= self.interval
+                 and assessment.code not in self.spoken_codes)
         if assessment.code == "ready":
             speak = ready
         if speak:
             self.last_spoken = now
+            self.spoken_codes.add(assessment.code)
         return ready, speak
 
 
 def guided_capture(camera, speak, stop_check, config):
-    """Return (full-resolution frame, status); never OCR a rejected capture."""
+    """Guide briefly, then let full-resolution OCR judge uncertain framing."""
     analyzer = FrameAnalyzer(config)
     gate = GuidanceGate(config)
     stopped = stop_check or (lambda: False)
     speak("Point the camera toward the page. Keep the page still and move the camera when instructed.")
-    deadline = time.monotonic() + number(config, "ocr_guidance_timeout_s", 10, 300)
+    started = time.monotonic()
+    deadline = started + number(config, "ocr_guidance_timeout_s", 10, 300)
+    auto_after = min(number(config, "ocr_guidance_auto_capture_s", 2, 30),
+                     (deadline - started) * .6)
+    quiet_frames = 0
     missing_since = None
     try:
         if not camera.start_preview():
@@ -155,7 +167,16 @@ def guided_capture(camera, speak, stop_check, config):
                 continue
             missing_since = None
             assessment = analyzer.assess(frame)
-            ready, announce = gate.update(assessment, time.monotonic())
+            now = time.monotonic()
+            ready, announce = gate.update(assessment, now)
+            # Even a visible page can fail contour/text-shape heuristics.
+            # After a short window, try OCR on a steady, adequately lit frame.
+            quiet_frames = quiet_frames + 1 if assessment.code not in ("dark", "moving", "blur") else 0
+            fallback = now - started >= auto_after and quiet_frames >= gate.required
+            if fallback and not ready:
+                speak("Hold steady. I will try reading this image now.")
+                announce = False
+                ready = True
             if announce:
                 speak(assessment.message)
             if stopped():
@@ -170,10 +191,17 @@ def guided_capture(camera, speak, stop_check, config):
                 # Still and preview can have different crops. Check the actual
                 # still, independently of motion between different resolutions.
                 check = FrameAnalyzer(config).assess(frame)
-                if check.code == "ready":
+                if check.readable or check.code == "ready" or (
+                    fallback and check.code not in ("dark", "blur", "moving")
+                ):
+                    if check.code == "clipped":
+                        speak("Reading the visible text. Some text may be outside the image.")
                     speak("Reading now.")
                     return frame, ""
+                if fallback:
+                    return None, "OCR guidance unavailable. The image is too dark or blurry. Please adjust the lighting and try again."
                 speak(check.message)
+                quiet_frames = 0
                 analyzer = FrameAnalyzer(config)
                 gate = GuidanceGate(config)
                 if not camera.start_preview():
