@@ -257,6 +257,7 @@ def _button3_stop_signal():
 
     def _cancel():
         finished.set()
+        watcher.join(timeout=1)
 
     return stopped.is_set, _cancel
 
@@ -352,12 +353,40 @@ def mode_ocr_scan():
         return
 
     try:
-        # Non-blocking: plays "Scanning now" while capture runs in parallel
-        _speak("Scanning now.")
-        # UPDATED FOR NEW ocr.py: scan_and_read() now only takes lang= —
-        # it opens/captures/reads the camera internally, so cap/cam_type
-        # are no longer passed in.
-        text = _modules["ocr"].scan_and_read(lang='eng')
+        while True:
+            _drain_button_messages()
+            stop_check, stop_watcher = _button3_stop_signal()
+            try:
+                if stop_check is not None:
+                    _speak(f"Press button 3 {_STOP_PRESSES} times to cancel scanning.", block=True)
+                def guidance_speak(message):
+                    # Wait for each short prompt; the preview reader keeps only
+                    # the newest image while speech plays.
+                    _speak(message, block=True)
+                text = _modules["ocr"].scan_and_read(
+                    lang='eng', speak_fn=guidance_speak, stop_check=stop_check)
+                if stop_check and stop_check():
+                    text = "OCR scan cancelled."
+            except KeyboardInterrupt:
+                text = "OCR scan cancelled."
+            except Exception:
+                logger.exception("Guided OCR capture failed")
+                text = "OCR guidance unavailable. Please check the camera and try again."
+            finally:
+                stop_watcher()
+            if text != "OCR positioning timed out.":
+                break
+            _speak("Positioning timed out. Press button 1 to retry or button 2 to cancel.", block=True)
+            if _morse_serial_singleton is not None:
+                choice = _morse_serial_singleton.wait_for_raw_button(timeout=15)
+            else:
+                choice = _keyboard_input("1 to retry, Enter to cancel: ", default="")
+            if str(choice) != "1":
+                _speak("OCR scan cancelled.")
+                return
+        if text and text.startswith(("OCR scan cancelled", "OCR guidance unavailable")):
+            _speak(text)
+            return
 
         # UPDATED: the old check ("Could not" / capital-E "Error") never
         # matched any of the new ocr.py's real failure/status strings, so

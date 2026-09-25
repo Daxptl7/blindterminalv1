@@ -110,6 +110,8 @@ def _load_config() -> dict:
         "gemini_model_name": "gemini-3.5-flash-lite",
         "gemini_timeout_s": 8,
     }
+    from modules.ocr_guidance import DEFAULTS
+    defaults.update(DEFAULTS)
     try:
         if CONFIG_PATH.exists():
             with open(CONFIG_PATH, "r") as f:
@@ -236,6 +238,86 @@ def _rpicam_capture() -> "cv2 frame | None":
 # ─────────────────────────────────────────────────────────────────────────────
 # Camera Manager  (singleton)
 # ─────────────────────────────────────────────────────────────────────────────
+class LatestPreview:
+    """Drain camera frames continuously; expose only a fresh latest frame."""
+    def __init__(self, cap=None, binary=None):
+        self.cap = cap
+        self.process = None
+        self.stopped = threading.Event()
+        self.lock = threading.Lock()
+        self.latest = None
+        self.timestamp = 0
+        if binary:
+            # Same 16:9 aspect as the default full-resolution still. The final
+            # image is rechecked because the sensor mode may change its crop.
+            command = [binary, "--timeout", "0", "--nopreview", "--codec", "mjpeg",
+                       "--width", "1280", "--height", "720", "--framerate", "5",
+                       "--output", "-"]
+            if "rpicam" in binary:
+                command += ["--autofocus-mode", "continuous", "--autofocus-range", "full"]
+            self.process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                            stderr=subprocess.DEVNULL, bufsize=0)
+        self.thread = threading.Thread(target=self._read, daemon=True)
+        self.thread.start()
+
+    def _publish(self, frame):
+        with self.lock:
+            self.latest = frame
+            self.timestamp = time.monotonic()
+
+    def _read(self):
+        try:
+            if self.process:
+                buffer = bytearray()
+                while not self.stopped.is_set():
+                    chunk = self.process.stdout.read(65536)
+                    if not chunk:
+                        break
+                    buffer.extend(chunk)
+                    while True:
+                        start = buffer.find(b"\xff\xd8")
+                        end = buffer.find(b"\xff\xd9", max(start, 0))
+                        if start < 0 or end < 0:
+                            break
+                        frame = cv2.imdecode(np.frombuffer(bytes(buffer[start:end+2]),
+                                                          dtype=np.uint8), cv2.IMREAD_COLOR)
+                        del buffer[:end+2]
+                        if frame is not None:
+                            self._publish(frame)
+                    if len(buffer) > 4_000_000:
+                        buffer.clear()
+            else:
+                while not self.stopped.is_set():
+                    ok, frame = self.cap.read()
+                    if not ok:
+                        break
+                    self._publish(frame)
+        except Exception:
+            logger.exception("OCR preview reader failed")
+
+    def take(self):
+        with self.lock:
+            frame, self.latest = self.latest, None
+            return frame if time.monotonic() - self.timestamp < 2 else None
+
+    def close(self):
+        self.stopped.set()
+        if self.process:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=2)
+        self.thread.join(timeout=2)
+        if self.process:
+            self.process.stdout.close()
+        if self.thread.is_alive():
+            # Do not permit a still read concurrently with a stuck USB reader.
+            raise RuntimeError("Camera preview did not stop; reconnect the camera.")
+
+
 class CameraManager:
     """
     Singleton that keeps the camera handle alive across multiple scan calls.
@@ -250,6 +332,7 @@ class CameraManager:
                 if cls._instance is None:
                     obj = super().__new__(cls)
                     obj._cam_type = None   # "rpicam" | "usb" | None
+                    obj._preview = None
                     obj._usb_cap  = None   # cv2.VideoCapture (usb only)
                     cls._instance = obj
         return cls._instance
@@ -285,7 +368,7 @@ class CameraManager:
         return False
 
     # ── capture ───────────────────────────────────────────────────────────────
-    def capture(self) -> "cv2 frame | None":
+    def capture(self, stop_check=None) -> "cv2 frame | None":
         """Captures one BGR frame from whichever camera is active."""
         capture_frames = _config_int("ocr_capture_frames", 3, 1, 5)
 
@@ -293,6 +376,8 @@ class CameraManager:
             best = None
             best_score = -1.0
             for _ in range(capture_frames):
+                if stop_check and stop_check():
+                    return None
                 frame = _rpicam_capture()
                 if frame is None:
                     continue
@@ -310,6 +395,8 @@ class CameraManager:
             for _ in range(5):            # warm up exposure/focus
                 self._usb_cap.read()
             for _ in range(capture_frames):
+                if stop_check and stop_check():
+                    return None
                 time.sleep(0.12)
                 ret, frame = self._usb_cap.read()
                 if not ret:
@@ -327,8 +414,34 @@ class CameraManager:
         logger.error("capture() called but no camera is open.")
         return None
 
+    def start_preview(self):
+        self.stop_preview()
+        if self._cam_type == "usb":
+            self._preview = LatestPreview(self._usb_cap)
+        elif self._cam_type == "rpicam":
+            binary = shutil.which("rpicam-vid") or shutil.which("libcamera-vid")
+            if not binary:
+                return False
+            try:
+                self._preview = LatestPreview(binary=binary)
+            except OSError:
+                logger.exception("Could not start OCR preview")
+                return False
+        else:
+            return False
+        return True
+
+    def preview_frame(self):
+        return self._preview.take() if self._preview else None
+
+    def stop_preview(self):
+        if self._preview:
+            self._preview.close()
+            self._preview = None
+
     # ── release ───────────────────────────────────────────────────────────────
     def release(self):
+        self.stop_preview()
         if self._usb_cap:
             try:
                 self._usb_cap.release()
@@ -1190,12 +1303,15 @@ def open_camera() -> bool:
     return _camera.open()
 
 
-def scan_and_read(lang: str = "eng") -> str:
+def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
     """
     Captures one frame and returns the extracted text.
 
     Args:
         lang : language code — "eng", "hin", "guj"  (or ISO: "en", "hi", "gu")
+        speak_fn: optional blocking prompt callback; enables guided positioning.
+        stop_check: optional cancellation predicate. Existing callers without
+            speak_fn retain immediate capture behavior.
 
     Returns:
         Extracted text string, or an error message starting with "OCR".
@@ -1203,7 +1319,15 @@ def scan_and_read(lang: str = "eng") -> str:
     if not _camera.open():
         return "Camera not available. Please check the ribbon cable connection."
 
-    frame = _camera.capture()
+    if speak_fn is not None and _config.get("ocr_guidance_enabled", True):
+        from modules.ocr_guidance import guided_capture
+        frame, status = guided_capture(_camera, speak_fn, stop_check, _config)
+        if frame is None:
+            return status
+    else:
+        frame = _camera.capture()
+    if stop_check and stop_check():
+        return "OCR scan cancelled."
     if frame is None:
         return "Image capture failed. Please try again."
 
