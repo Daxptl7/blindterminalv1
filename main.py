@@ -408,8 +408,7 @@ def mode_ocr_scan():
         #
         # speak_document_with_privacy_check() does three things atomically:
         #   1. Asks "confidential or normal?" through the earphone only
-        #   2. Waits for Button 1 (private) or Button 2 (speaker) — with an
-        #      8-second microphone fallback that accepts "yes"/"no"
+        #   2. Waits for Button 1 (private) or Button 2 (speaker) only
         #   3. Routes the spoken text to ONLY the correct audio path
         # Nothing is read aloud before the user makes their choice.
         try:
@@ -417,7 +416,9 @@ def mode_ocr_scan():
             # Safely resolve the morse serial handle -- supports both variable
             # names used across different versions of this file.
             _ms_ref = _morse_serial_singleton  # always defined at module level
-            _cm.speak_document_with_privacy_check(text, "eng", _ms_ref)
+            document_mode = _cm.speak_document_with_privacy_check(text, "eng", _ms_ref)
+            if document_mode not in ("PRIVATE", "NORMAL"):
+                return
         except Exception as e:
             # Never leak recognized document text to the public speaker when
             # privacy routing fails.  The user can safely retry after checking
@@ -437,39 +438,13 @@ def mode_ocr_scan():
             _modules["ai_query"].index_text_in_rag(text)
             logger.info("OCR text indexed into RAG vector store.")
 
-        # —— ASK IF USER WANTS EXPLANATION (FIX 2) ——————————————
-        # Original code used input() which blocks forever on a headless device
-        # with no keyboard. Now listens to the physical Pico W buttons first
-        # (Button 1 = yes, Button 2 = no), with a 4-second window, then
-        # falls back to the microphone, and finally defaults to "no" so a
-        # blind user never gets silently stuck waiting for a keypress.
-        _speak("Would you like to explain this? Press 1 for yes, 2 for no.")
-
-        response = "no"    # Explanation runs only after an explicit request.
-
-        try:
-            # 1. Wait 4 seconds for a button press (Button 1 = yes, Button 2 = no)
-            if _morse_serial_singleton is not None:
-                btn = _morse_serial_singleton.wait_for_raw_button(timeout=4.0)
-                if btn == 1:
-                    response = "yes"
-                elif btn == 2:
-                    response = "no"
-                else:
-                    # 2. No button pressed — try the microphone
-                    spoken = _listen("en-IN")
-                    if spoken:
-                        response = spoken.lower()
-            else:
-                # Keyboard fallback for laptop/development use
-                kb = (_keyboard_input("[Y/N/1/2/Enter=No]: ", default="") or "").lower()
-                if kb in ("y", "yes", "1"):
-                    response = "yes"
-
-        except Exception as e:
-            logger.warning(f"Mic/Button error while asking for explanation: {e}")
-
-        if response in ("yes", "y", "1"):
+        # The selector drains before speaking, preserves presses during the
+        # prompt, and starts the full response window after speech completes.
+        response = _select_with_buttons(
+            ("1", "2"),
+            "Would you like an explanation? Press button 1 for yes, or button 2 for no.",
+        )
+        if response == "1":
             _speak("Analyzing...")
             if _has("ai_query"):
                 answer = _modules["ai_query"].ask_ai(
@@ -959,6 +934,8 @@ def mode_translate():
             privacy_choice = _modules["privacy"].ask_confidentiality(
                 _morse_serial_singleton
             )
+            if privacy_choice not in ("PRIVATE", "NORMAL"):
+                return
             private_translation = privacy_choice == "PRIVATE"
         except Exception as e:
             logger.error(f"Translation privacy selection failed: {e}")
@@ -1571,12 +1548,10 @@ def mode_confidential_demo():
         return
 
     _speak("This is a demonstration of confidential mode.")
-    result = _modules["privacy"].ask_privacy()
-    if result == "PRIVATE":
-        _speak("This message is being spoken privately, through the earphone only.")
-    else:
-        _speak("This message is being spoken normally, through the speaker.")
-    _modules["privacy"].reset_to_normal()
+    _modules["privacy"].speak_with_privacy_check(
+        "This is the confidential mode audio test.", "eng", _morse_serial_singleton
+    )
+
 
 # Math word problems typed in Morse use ordinary spelled-out words instead
 # of symbols the buttons have no way to produce, e.g.:

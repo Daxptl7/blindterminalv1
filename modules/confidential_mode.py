@@ -6,22 +6,8 @@ Controls dual audio routing between the normal speaker and the wired
 software switching inside tts.py. No GPIO / bone conduction hardware
 involved anymore.
 
-FIXES IN THIS VERSION
-----------------------
-1. PrivateAudio.enter/exit were missing their double underscores, so
-   `with PrivateAudio():` could never actually work as a context
-   manager — Python requires __enter__/__exit__. That raised an
-   AttributeError every single time, which main.py's try/except was
-   silently swallowing. This is why the confidential prompt never
-   played: the code crashed before it ever got to ask the question,
-   and fell straight through to the "just speak it normally" fallback.
-2. Added a microphone fallback: if nobody presses a button within
-   PROMPT_TIMEOUT seconds, we listen on the mic for a spoken
-   "private"/"yes" or "public"/"speaker"/"no" instead of just
-   defaulting silently.
-3. Added reset_to_normal() and ask_privacy() so main.py (which was
-   written against slightly different function names) works without
-   further changes.
+Privacy selection uses physical buttons only. No microphone is opened.
+Missing buttons or an unanswered prompt cancel document playback.
 """
 
 import logging
@@ -44,12 +30,16 @@ try:
     from modules.morse_serial import MorseSerial
 except Exception as e:  # pragma: no cover - depends on host hardware/deps
     MorseSerial = None
-    logger.info(f"Pico W buttons unavailable in confidential mode ({e}); using voice prompt.")
+    logger.info(f"Pico W buttons unavailable in confidential mode ({e}); button selection unavailable.")
 
 settings = load_settings()
 
 # Safely load the timeout even if the settings file is missing the privacy block
-PROMPT_TIMEOUT = settings.get("privacy", {}).get("confidential_prompt_timeout_seconds", 8)
+try:
+    PROMPT_TIMEOUT = max(15, min(120, float(settings.get("privacy", {}).get(
+        "confidential_prompt_timeout_seconds", 15))))
+except (TypeError, ValueError):
+    PROMPT_TIMEOUT = 15
 
 
 def enable_earphone():
@@ -87,62 +77,38 @@ class PrivateAudio:
         return False
 
 
-def _interpret_privacy_voice(spoken):
-    """Map a spoken phrase to 'PRIVATE', 'NORMAL', or None (unrecognized)."""
-    if not spoken:
-        return None
-    s = spoken.strip().lower()
-    private_words = ("private", "privacy", "confidential", "yes", "one", "1")
-    normal_words = ("public", "normal", "speaker", "no", "two", "2")
-    if any(w in s for w in private_words):
-        return "PRIVATE"
-    if any(w in s for w in normal_words):
-        return "NORMAL"
-    return None
-
-
 def ask_confidentiality(morse_serial=None):
-    """
-    Asks the privacy question via earphones ONLY, then waits for Button 1
-    (private) / Button 2 (speaker). If nobody presses a button in time,
-    falls back to listening on the mic for a spoken "private"/"yes" or
-    "public"/"no". Defaults to NORMAL only if neither answers.
-    """
-    # Flush out any old, accidental button presses from the queue!
-    if morse_serial is not None:
-        while morse_serial.get_message(timeout=0.05) is not None:
-            pass
-
+    """Button 1 selects earphones, Button 2 selects speaker; None cancels."""
     with PrivateAudio():
-        tts.speak(
-            "Is this confidential? Press 1 for Private. Press 2 for Speaker. "
-            "You can also just say private, or public.",
-            "en",
-            block=True,
-        )
-
-    button = None
-    if morse_serial is not None:
-        button = morse_serial.wait_for_raw_button(timeout=PROMPT_TIMEOUT)
-
-    if button == 1:
-        return "PRIVATE"
-    if button == 2:
-        return "NORMAL"
-
-    # No button pressed in time (or no Pico W connected) — try the mic.
-    try:
-        from modules import voice as _voice
-
-        spoken = _voice.listen("en-IN")
-        decision = _interpret_privacy_voice(spoken)
-        if decision:
-            return decision
-    except Exception as e:
-        logger.warning(f"Voice fallback for privacy prompt failed: {e}")
-
-    # Nobody answered by button or voice — safe default is NORMAL.
-    return "NORMAL"
+        if morse_serial is None:
+            tts.speak("Buttons are not connected. Playback cancelled.", "en", block=True)
+            return None
+        try:
+            # Clear old presses before the prompt, never after it. A press
+            # made during speech stays queued for the selection loop.
+            while morse_serial.get_message(timeout=0.05) is not None:
+                pass
+            tts.speak("Press button 1 for private earphones. Press button 2 for speaker.",
+                      "en", block=True)
+            deadline = time.monotonic() + PROMPT_TIMEOUT
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                button = morse_serial.wait_for_raw_button(timeout=remaining)
+                if button == 1:
+                    return "PRIVATE"
+                if button == 2:
+                    return "NORMAL"
+                if button is None:
+                    break
+                # Ignore unrelated buttons; do not consume the choice window.
+        except Exception:
+            logger.exception("Privacy button input failed")
+            tts.speak("Button input failed. Playback cancelled.", "en", block=True)
+            return None
+        tts.speak("No privacy option selected. Playback cancelled.", "en", block=True)
+    return None
 
 
 # Alias — main.py's standalone demo mode (Mode 8) calls ask_privacy().
@@ -154,6 +120,8 @@ def speak_with_privacy_check(text, lang_code, morse_serial=None):
     """Asks confidential/public, then speaks `text` through the correct
     audio path only — nothing is read aloud before the choice is made."""
     mode = ask_confidentiality(morse_serial)
+    if mode not in ("PRIVATE", "NORMAL"):
+        return None
     if mode == "PRIVATE":
         with PrivateAudio():
             tts.speak(text, lang_code, block=True)
@@ -238,6 +206,8 @@ def speak_document_with_privacy_check(
         return None
 
     mode = ask_confidentiality(morse_serial)
+    if mode not in ("PRIVATE", "NORMAL"):
+        return None
     if mode == "PRIVATE":
         with PrivateAudio():
             for index, chunk in enumerate(chunks):
@@ -259,7 +229,7 @@ if __name__ == "__main__":
 
     ms = MorseSerial() if MorseSerial is not None else None
     if ms is None:
-        print("(No Pico W detected — the prompt will use the microphone.)")
+        print("(No Pico W detected — playback requires button selection.)")
     try:
         while True:
             print("\nPress Enter for privacy prompt (or type QUIT): ", end="")
@@ -271,7 +241,7 @@ if __name__ == "__main__":
             print(" 🔒 Is this confidential?")
             print(" Button 1 / key 1 -> PRIVATE (earphones only)")
             print(" Button 2 / key 2 -> NORMAL (speaker)")
-            print(f" ({PROMPT_TIMEOUT}s timeout -> falls back to mic, then NORMAL)")
+            print(f" ({PROMPT_TIMEOUT}s timeout -> playback cancelled)")
             print("─────────────────────────────────────────────")
 
             speak_with_privacy_check(

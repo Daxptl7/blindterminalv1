@@ -90,3 +90,17 @@ attempt OCR on them; textured rectangles may resemble text. Boundaries can be mi
 perspective, or with multiple pages. Complete-page framing also cannot guarantee
 that very small print is legible. The actual Pi camera and mounting must be used
 to tune thresholds and validate usability with a blind user before deployment.
+
+## Explanation and privacy buttons
+
+After document playback, the explanation question finishes speaking before its
+response window starts (15 seconds by default via `button_choice_timeout_seconds`).
+Button 1 starts the explanation; Button 2 skips it. Old events are cleared before
+the prompt, presses made during the prompt are retained, and unrelated buttons
+are ignored. No microphone fallback runs for this question.
+
+Privacy selection is buttons only: Button 1 selects private earphones and Button 2
+selects the speaker. Its response window starts after the prompt and is at least
+15 seconds. No selection, missing buttons, or a serial error cancels playback;
+there is no spoken-answer fallback or automatic public selection. This applies
+to OCR, translation privacy selection, and the standalone privacy demonstration.
