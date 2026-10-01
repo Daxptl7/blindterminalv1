@@ -55,7 +55,10 @@ pynmea2>=1.19.0
 # This project imports `from google import genai` — that is google-genai, the
 # current SDK. google-generativeai is the superseded package and nothing here
 # imports it, so it is not listed.
-google-genai>=1.0.0
+# Live audio uses the current send_realtime_input() API. Older 1.x releases
+# fall back to a legacy media_chunks envelope that can connect successfully
+# while producing no translated turn on current Live models.
+google-genai>=2.23.0,<3.0.0
 openai>=1.30.0
 cohere>=5.0.0
 groq>=0.9.0

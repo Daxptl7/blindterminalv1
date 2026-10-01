@@ -97,6 +97,7 @@ _safe_import("ai_query", "ai_query")
 _safe_import("morse", "morse")
 _safe_import("ocr", "ocr")
 _safe_import("translator", "translator")
+_safe_import("live_translator", "live_translator")
 _safe_import("math_solver", "mathsolver")
 
 # Optional modules (app works fine without)
@@ -746,18 +747,61 @@ def mode_translate():
     print("\n[Mode 4 — Translate]  input method")
     print("  Button 1 → Type text")
     print("  Button 2 → Morse code buttons")
-    print("  Button 3 → Voice / microphone")
+    print("  Button 3 → Voice / microphone (Single phrase)")
+    print("  Button 4 (or double-tap Button 3) → Live Real-Time Conversation")
 
     input_choice = _select_with_buttons(
-        ("1", "2", "3"),
+        ("1", "2", "3", "4", "33"),
         "Translation mode. "
         "Press button 1 to type your text. "
         "Press button 2 to enter it in Morse code. "
-        "Press button 3 to speak it."
+        "Press button 3 to speak a single phrase. "
+        "Or press button 4 or double tap button 3 for real-time live conversation.",
+        double="3"
     )
 
-    if input_choice not in ("1", "2", "3"):
+    if input_choice not in ("1", "2", "3", "4", "33"):
         _speak("No button was pressed. Translation cancelled.")
+        return
+
+    # ── REAL-TIME LIVE CONVERSATION OPTION ──────────────────────────────
+    if input_choice in ("4", "33"):
+        if not _has("live_translator"):
+            _speak("Real-time live translation module is not available.")
+            return
+
+        print("\n[Live Translation] Select Language Pair:")
+        print("  Button 1 → English <-> Gujarati")
+        print("  Button 2 → English <-> Hindi")
+        pair_choice = _select_with_buttons(
+            ("1", "2"),
+            "Live conversation mode. Press button 1 for English and Gujarati, "
+            "or button 2 for English and Hindi."
+        )
+        if pair_choice not in ("1", "2"):
+            _speak("No language pair selected. Live translation cancelled.")
+            return
+
+        pair = "en-hi" if pair_choice == "2" else "en-gu"
+        pair_name = "English and Hindi" if pair == "en-hi" else "English and Gujarati"
+
+        _speak(
+            f"Starting live conversation interpreter for {pair_name}. "
+            "Start speaking anytime. Double-press button 3 or press Enter to stop.",
+            block=True
+        )
+
+        stop_check, cancel_stop = _button3_stop_signal()
+        try:
+            live_mod = _modules["live_translator"]
+            interpreter = live_mod.LiveTranslator(lang_pair=pair)
+            interpreter.run_live(stop_check=stop_check)
+        except Exception as e:
+            logger.error(f"Live translation runtime error: {e}")
+            _speak("Live translation encountered an error.")
+        finally:
+            cancel_stop()
+        _speak("Live conversation ended. Returning to menu.")
         return
 
     languages = {
