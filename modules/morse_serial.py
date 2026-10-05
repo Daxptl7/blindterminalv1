@@ -80,10 +80,26 @@ def find_pico_port():
     """
     Resolve the Pico W's serial device path.
 
-    Honours the "morse_port" setting when present and exists on the filesystem,
-    allowing a Pi with several USB-serial gadgets to pin the right one;
-    otherwise falls back to auto-detecting /dev/ttyACM*, /dev/ttyUSB*, or macOS usbmodem nodes.
+    1. Checks USB devices using serial.tools.list_ports for Raspberry Pi Pico
+       (Vendor ID 0x2e8a, or description containing Pico/RP2040). This prevents
+       connecting to USB sound cards or modems, and automatically tracks the
+       Pico even if it re-enumerates from /dev/ttyACM0 to /dev/ttyACM1!
+    2. If not matched by VID, honours configured "morse_port" if it exists.
+    3. Falls back to scanning available /dev/ttyACM*, /dev/ttyUSB*, and macOS nodes.
     """
+    try:
+        import serial.tools.list_ports as list_ports
+        for p in list_ports.comports():
+            if getattr(p, "vid", None) == 0x2e8a:
+                logger.debug(f"Found Pico by VID 0x2e8a on {p.device}")
+                return p.device
+            desc = (getattr(p, "description", "") or "").lower()
+            if "pico" in desc or "rp2040" in desc or "micropython" in desc:
+                logger.debug(f"Found Pico by description on {p.device}")
+                return p.device
+    except Exception as e:
+        logger.debug(f"Error checking list_ports: {e}")
+
     if MORSE_PORT and Path(MORSE_PORT).exists():
         return MORSE_PORT
     if MORSE_PORT:
@@ -178,9 +194,14 @@ class MorseSerial:
                 self.ser.close()
         except Exception:
             pass
+        self.ser = None
         try:
             self.port = find_pico_port()
             self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
+            try:
+                self.ser.reset_input_buffer()
+            except Exception:
+                pass
             return True
         except Exception:
             # Port not back yet — caller backs off and retries.
@@ -195,7 +216,21 @@ class MorseSerial:
                 if not self._reconnect():
                     continue
             try:
-                line = self.ser.readline().decode("utf-8", errors="ignore").strip()
+                t0 = time.monotonic()
+                raw_bytes = self.ser.readline()
+                read_duration = time.monotonic() - t0
+
+                if not raw_bytes:
+                    # PySerial with timeout=1 blocks ~1.0s before returning empty bytes.
+                    # If it returns empty bytes in under 0.2s, the file descriptor received EOF
+                    # because the USB device was disconnected or reset!
+                    if read_duration < 0.2:
+                        raise serial.SerialException(
+                            f"Device disconnected on {self.port} (immediate EOF in {read_duration:.3f}s)"
+                        )
+                    continue
+
+                line = raw_bytes.decode("utf-8", errors="ignore").strip()
                 if line:
                     self.message_queue.put(line)
                     self._mark_up()
