@@ -1725,8 +1725,7 @@ def _get_menu_choice():
     available (e.g. laptop development).
     """
     if _morse_serial_singleton is not None:
-        _speak("Enter a five-press Morse digit. Button 1 is dot; button 2 is dash. "
-               "For scan, press button 1 once, then button 2 four times. "
+        _speak("Enter a five-press Morse code. Button 1 is dot; button 2 is dash. "
                "Keep pauses under five seconds.")
         return _morse_serial_singleton.read_menu_digit(timeout=120)
     return _keyboard_input("Mode (1-9, 0=quit): ", default=None)
@@ -1742,7 +1741,7 @@ def main():
     logger.info("=" * 50)
 
     if _morse_serial_singleton is not None:
-        _speak("Welcome to Blind Assist. Tap a digit on the buttons to select a mode.")
+        _speak("Welcome to Blind Assist.")
     else:
         _speak("Welcome to Blind Assist. Press a number to select a mode.")
 
