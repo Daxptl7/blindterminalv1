@@ -80,12 +80,14 @@ def find_pico_port():
     """
     Resolve the Pico W's serial device path.
 
-    Honours the "morse_port" setting when present so a Pi with several
-    USB-serial gadgets attached can pin the right one; otherwise falls
-    back to the lowest-numbered /dev/ttyACM*, /dev/ttyUSB*, or macOS usbmodem node.
+    Honours the "morse_port" setting when present and exists on the filesystem,
+    allowing a Pi with several USB-serial gadgets to pin the right one;
+    otherwise falls back to auto-detecting /dev/ttyACM*, /dev/ttyUSB*, or macOS usbmodem nodes.
     """
-    if MORSE_PORT:
+    if MORSE_PORT and Path(MORSE_PORT).exists():
         return MORSE_PORT
+    if MORSE_PORT:
+        logger.debug(f"Configured morse_port '{MORSE_PORT}' not found, falling back to auto-detection.")
     candidates = (
         sorted(glob.glob("/dev/ttyACM*"))
         + sorted(glob.glob("/dev/ttyUSB*"))

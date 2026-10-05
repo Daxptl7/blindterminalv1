@@ -16,6 +16,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+node_modules/
 
 # Translation cache (rebuilt at runtime; device-local)
 cache/

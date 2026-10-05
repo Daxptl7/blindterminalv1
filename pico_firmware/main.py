@@ -1,6 +1,8 @@
 # BlindAssist Pico / Pico W firmware. Save as main.py ON THE PICO.
-# Buttons: GP0, GP1, GP2 to 3.3V when pressed (internal pull-down).
-# Set ACTIVE_LOW=True only for buttons wired between GPIO and GND.
+# Buttons: GP0, GP1, GP2.
+# - If buttons are wired to 3.3V on press (with internal pull-down): ACTIVE_LOW = False
+# - If buttons are wired to GND on press (with internal pull-up):   ACTIVE_LOW = True
+#   (Most standard tactile push buttons are wired to GND!)
 import time
 
 ACTIVE_LOW = False
@@ -90,23 +92,28 @@ def run():
     import machine
     pull = machine.Pin.PULL_UP if ACTIVE_LOW else machine.Pin.PULL_DOWN
     pins = [machine.Pin(number, machine.Pin.IN, pull) for number in (0, 1, 2)]
+    led = None
     try:
         led = machine.Pin("LED", machine.Pin.OUT)
-    except (TypeError, ValueError):
-        led = machine.Pin(25, machine.Pin.OUT)  # original Pico
+    except Exception:
+        try:
+            led = machine.Pin(25, machine.Pin.OUT)  # original Pico
+        except Exception:
+            led = None
     led_until = [None]
 
     def send(message):
         print(message)
-        led.value(1)
-        led_until[0] = time.ticks_add(time.ticks_ms(), 20)
+        if led is not None:
+            led.value(1)
+            led_until[0] = time.ticks_add(time.ticks_ms(), 20)
 
     controller = ButtonController(send)
     send("READY")
     while True:
         now = time.ticks_ms()
         controller.update([not pin.value() if ACTIVE_LOW else pin.value() for pin in pins], now)
-        if led_until[0] is not None and time.ticks_diff(now, led_until[0]) >= 0:
+        if led is not None and led_until[0] is not None and time.ticks_diff(now, led_until[0]) >= 0:
             led.value(0)
             led_until[0] = None
         time.sleep_ms(5)
