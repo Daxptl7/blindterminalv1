@@ -6468,3 +6468,562 @@ STDERR: aplay: main:850: audio open error: Device or resource busy
 2026-09-15 00:14:37,247 [INFO] Translated [gu→en] via mymemory: મનમાં એક પ્રશ્ન ઊભો થયો કે માણસ ધારે એના થઈ છે ભગવાનનો આપણો આયોજન નિષ્ફળ બનાવવા  → A question arose in the mind that man assumes that it has happened, to make our 
 2026-09-15 00:16:09,462 [INFO] Shutting down...
 2026-09-15 00:16:09,463 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-05 23:09:43,010 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-05 23:09:43,340 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-05 23:09:43,342 [INFO] Module loaded: tts
+2026-10-05 23:09:43,369 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-05 23:09:43,371 [INFO] STT engines active: vosk -> google
+2026-10-05 23:09:43,372 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-05 23:09:43,387 [INFO] Module loaded: voice
+2026-10-05 23:09:43,392 [INFO] Module loaded: ai_query
+2026-10-05 23:09:43,394 [INFO] Morse decoder started with auto-timing.
+2026-10-05 23:09:43,395 [INFO] Module loaded: morse
+2026-10-05 23:09:43,467 [INFO] Module loaded: ocr
+2026-10-05 23:09:43,485 [INFO] Module loaded: translator
+2026-10-05 23:09:45,231 [INFO] Module loaded: live_translator
+2026-10-05 23:09:45,639 [INFO] Module loaded: math_solver
+2026-10-05 23:09:46,165 [INFO] Module loaded: gesture_control
+2026-10-05 23:09:46,166 [INFO] Module loaded: emotion_engine
+2026-10-05 23:09:46,167 [INFO] Module loaded: gps_navigator
+2026-10-05 23:09:46,176 [INFO] Module loaded: confidential_mode
+2026-10-05 23:09:46,187 [INFO] Module loaded: object_detection
+2026-10-05 23:09:46,189 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-05 23:09:46,190 [INFO] Pico W Morse buttons connected.
+2026-10-05 23:09:46,190 [INFO] Using the caller's Morse serial connection.
+2026-10-05 23:09:46,191 [INFO] ==================================================
+2026-10-05 23:09:46,191 [INFO] BlindAssist Starting...
+2026-10-05 23:09:46,192 [INFO] ==================================================
+2026-10-05 23:09:46,198 [INFO] TTS Manager ready.
+2026-10-05 23:09:46,199 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-05 23:09:46,354 [INFO] Shutting down...
+2026-10-05 23:15:50,068 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-05 23:15:50,395 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-05 23:15:50,397 [INFO] Module loaded: tts
+2026-10-05 23:15:50,423 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-05 23:15:50,425 [INFO] STT engines active: vosk -> google
+2026-10-05 23:15:50,426 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-05 23:15:50,442 [INFO] Module loaded: voice
+2026-10-05 23:15:50,447 [INFO] Module loaded: ai_query
+2026-10-05 23:15:50,449 [INFO] Morse decoder started with auto-timing.
+2026-10-05 23:15:50,449 [INFO] Module loaded: morse
+2026-10-05 23:15:50,508 [INFO] Module loaded: ocr
+2026-10-05 23:15:50,511 [INFO] Module loaded: translator
+2026-10-05 23:15:52,277 [INFO] Module loaded: live_translator
+2026-10-05 23:15:52,684 [INFO] Module loaded: math_solver
+2026-10-05 23:15:53,204 [INFO] Module loaded: gesture_control
+2026-10-05 23:15:53,205 [INFO] Module loaded: emotion_engine
+2026-10-05 23:15:53,207 [INFO] Module loaded: gps_navigator
+2026-10-05 23:15:53,210 [INFO] Module loaded: confidential_mode
+2026-10-05 23:15:53,213 [INFO] Module loaded: object_detection
+2026-10-05 23:15:53,214 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-05 23:15:53,215 [INFO] Pico W Morse buttons connected.
+2026-10-05 23:15:53,216 [INFO] Using the caller's Morse serial connection.
+2026-10-05 23:15:53,218 [INFO] ==================================================
+2026-10-05 23:15:53,219 [INFO] BlindAssist Starting...
+2026-10-05 23:15:53,219 [INFO] ==================================================
+2026-10-05 23:15:53,374 [INFO] TTS Manager ready.
+2026-10-05 23:15:53,375 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-05 23:15:58,147 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-05 23:16:13,414 [INFO] Mode 3: Voice Ask
+2026-10-05 23:16:13,436 [INFO] Speaking: "Voice mode. Ask your question now."
+2026-10-05 23:16:17,272 [INFO] Speaking: "Take as long as you need. Press button 3 3 times when you ar"
+2026-10-05 23:16:23,595 [INFO] Recording from plughw:2,0 (backstop 180s, buttons live)
+2026-10-05 23:16:30,132 [INFO] Stop button press 1 of 3
+2026-10-05 23:16:30,710 [INFO] Stop button press 2 of 3
+2026-10-05 23:16:31,261 [INFO] Stop button press 3 of 3
+2026-10-05 23:16:31,419 [INFO] Recording ended by button 3 (caller).
+2026-10-05 23:16:31,421 [INFO] Captured 7.5s at -9 dBFS
+2026-10-05 23:16:31,424 [INFO] Saved /mnt/aet_usb/recordings/voice_20261005_231631.wav (7.5s)
+2026-10-05 23:16:31,427 [INFO] Level -9 dBFS -> -9 dBFS after gain
+2026-10-05 23:16:33,350 [INFO] Loading Vosk en model from /home/pi/blindterminal/models_local/vosk
+2026-10-05 23:16:36,946 [INFO] Google transcribed: 'who is Shruti boraj'
+2026-10-05 23:16:36,947 [INFO] Final transcription: 'who is Shruti boraj'
+2026-10-05 23:16:36,948 [INFO] Voice: who is Shruti boraj
+2026-10-05 23:16:36,948 [INFO] Speaking: "You asked: who is Shruti boraj"
+2026-10-05 23:16:46,906 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 --buffer-time 500000 --period-time 100000 /tmp/tmp3fbhtcdg.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:46,911 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 /tmp/tmp3fbhtcdg.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:46,992 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 --buffer-time 500000 --period-time 100000 /tmp/tmp6bqqapc_.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:46,997 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 /tmp/tmp6bqqapc_.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:46,998 [ERROR] Could not play audio on plughw:3,0; falling back to the default output. Confidential routing is NOT in effect.
+2026-10-05 23:16:59,201 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 --buffer-time 500000 --period-time 100000 /tmp/tmpopbehm0a.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:59,207 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 /tmp/tmpopbehm0a.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:59,243 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 --buffer-time 500000 --period-time 100000 /tmp/tmpdh3p4j7e.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:59,248 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 /tmp/tmpdh3p4j7e.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:59,286 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 --buffer-time 500000 --period-time 100000 /tmp/tmp_ghdwgrp.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:59,291 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:3,0 /tmp/tmp_ghdwgrp.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:16:59,292 [ERROR] Could not play audio on plughw:3,0; falling back to the default output. Confidential routing is NOT in effect.
+2026-10-05 23:17:06,648 [ERROR] Read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-10-05 23:17:55,350 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-05 23:17:55,672 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-05 23:17:55,674 [INFO] Module loaded: tts
+2026-10-05 23:17:55,701 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-05 23:17:55,703 [INFO] STT engines active: vosk -> google
+2026-10-05 23:17:55,704 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-05 23:17:55,719 [INFO] Module loaded: voice
+2026-10-05 23:17:55,724 [INFO] Module loaded: ai_query
+2026-10-05 23:17:55,726 [INFO] Morse decoder started with auto-timing.
+2026-10-05 23:17:55,727 [INFO] Module loaded: morse
+2026-10-05 23:17:55,785 [INFO] Module loaded: ocr
+2026-10-05 23:17:55,789 [INFO] Module loaded: translator
+2026-10-05 23:17:57,538 [INFO] Module loaded: live_translator
+2026-10-05 23:17:57,947 [INFO] Module loaded: math_solver
+2026-10-05 23:17:58,466 [INFO] Module loaded: gesture_control
+2026-10-05 23:17:58,468 [INFO] Module loaded: emotion_engine
+2026-10-05 23:17:58,469 [INFO] Module loaded: gps_navigator
+2026-10-05 23:17:58,472 [INFO] Module loaded: confidential_mode
+2026-10-05 23:17:58,475 [INFO] Module loaded: object_detection
+2026-10-05 23:17:58,477 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-05 23:17:58,478 [INFO] Pico W Morse buttons connected.
+2026-10-05 23:17:58,478 [INFO] Using the caller's Morse serial connection.
+2026-10-05 23:17:58,480 [INFO] ==================================================
+2026-10-05 23:17:58,481 [INFO] BlindAssist Starting...
+2026-10-05 23:17:58,482 [INFO] ==================================================
+2026-10-05 23:17:58,636 [INFO] TTS Manager ready.
+2026-10-05 23:17:58,637 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-05 23:18:01,479 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-05 23:18:10,631 [INFO] Shutting down...
+2026-10-05 23:18:10,735 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-05 23:55:04,777 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-05 23:55:06,271 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-05 23:55:06,273 [INFO] Module loaded: tts
+2026-10-05 23:55:06,452 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-05 23:55:06,453 [INFO] STT engines active: vosk -> google
+2026-10-05 23:55:06,456 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-05 23:55:06,472 [INFO] Module loaded: voice
+2026-10-05 23:55:06,480 [INFO] Module loaded: ai_query
+2026-10-05 23:55:06,483 [INFO] Morse decoder started with auto-timing.
+2026-10-05 23:55:06,484 [INFO] Module loaded: morse
+2026-10-05 23:55:07,484 [INFO] Module loaded: ocr
+2026-10-05 23:55:07,489 [INFO] Module loaded: translator
+2026-10-05 23:55:10,045 [INFO] Module loaded: live_translator
+2026-10-05 23:55:10,960 [INFO] Module loaded: math_solver
+2026-10-05 23:55:12,101 [INFO] Module loaded: gesture_control
+2026-10-05 23:55:12,102 [INFO] Module loaded: emotion_engine
+2026-10-05 23:55:12,104 [INFO] Module loaded: gps_navigator
+2026-10-05 23:55:12,113 [INFO] Module loaded: confidential_mode
+2026-10-05 23:55:12,128 [INFO] Module loaded: object_detection
+2026-10-05 23:55:12,130 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-05 23:55:12,131 [INFO] Pico W Morse buttons connected.
+2026-10-05 23:55:12,132 [INFO] Using the caller's Morse serial connection.
+2026-10-05 23:55:12,134 [INFO] ==================================================
+2026-10-05 23:55:12,135 [INFO] BlindAssist Starting...
+2026-10-05 23:55:12,135 [INFO] ==================================================
+2026-10-05 23:55:12,391 [INFO] TTS Manager ready.
+2026-10-05 23:55:12,392 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-05 23:55:14,871 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-05 23:55:21,426 [INFO] Shutting down...
+2026-10-05 23:55:21,680 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-05 23:56:09,335 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-05 23:56:09,658 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-05 23:56:09,660 [INFO] Module loaded: tts
+2026-10-05 23:56:09,687 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-05 23:56:09,689 [INFO] STT engines active: vosk -> google
+2026-10-05 23:56:09,690 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-05 23:56:09,705 [INFO] Module loaded: voice
+2026-10-05 23:56:09,710 [INFO] Module loaded: ai_query
+2026-10-05 23:56:09,712 [INFO] Morse decoder started with auto-timing.
+2026-10-05 23:56:09,713 [INFO] Module loaded: morse
+2026-10-05 23:56:09,772 [INFO] Module loaded: ocr
+2026-10-05 23:56:09,775 [INFO] Module loaded: translator
+2026-10-05 23:56:11,534 [INFO] Module loaded: live_translator
+2026-10-05 23:56:11,942 [INFO] Module loaded: math_solver
+2026-10-05 23:56:12,462 [INFO] Module loaded: gesture_control
+2026-10-05 23:56:12,463 [INFO] Module loaded: emotion_engine
+2026-10-05 23:56:12,464 [INFO] Module loaded: gps_navigator
+2026-10-05 23:56:12,468 [INFO] Module loaded: confidential_mode
+2026-10-05 23:56:12,471 [INFO] Module loaded: object_detection
+2026-10-05 23:56:12,472 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-05 23:56:12,473 [INFO] Pico W Morse buttons connected.
+2026-10-05 23:56:12,474 [INFO] Using the caller's Morse serial connection.
+2026-10-05 23:56:12,476 [INFO] ==================================================
+2026-10-05 23:56:12,477 [INFO] BlindAssist Starting...
+2026-10-05 23:56:12,477 [INFO] ==================================================
+2026-10-05 23:56:12,631 [INFO] TTS Manager ready.
+2026-10-05 23:56:12,632 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-05 23:56:15,134 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-05 23:56:24,480 [INFO] Shutting down...
+2026-10-05 23:56:24,691 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-05 23:57:49,557 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-05 23:57:49,883 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-05 23:57:49,885 [INFO] Module loaded: tts
+2026-10-05 23:57:49,912 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-05 23:57:49,914 [INFO] STT engines active: vosk -> google
+2026-10-05 23:57:49,915 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-05 23:57:49,930 [INFO] Module loaded: voice
+2026-10-05 23:57:49,935 [INFO] Module loaded: ai_query
+2026-10-05 23:57:49,937 [INFO] Morse decoder started with auto-timing.
+2026-10-05 23:57:49,938 [INFO] Module loaded: morse
+2026-10-05 23:57:49,997 [INFO] Module loaded: ocr
+2026-10-05 23:57:50,000 [INFO] Module loaded: translator
+2026-10-05 23:57:51,749 [INFO] Module loaded: live_translator
+2026-10-05 23:57:52,156 [INFO] Module loaded: math_solver
+2026-10-05 23:57:52,675 [INFO] Module loaded: gesture_control
+2026-10-05 23:57:52,676 [INFO] Module loaded: emotion_engine
+2026-10-05 23:57:52,678 [INFO] Module loaded: gps_navigator
+2026-10-05 23:57:52,681 [INFO] Module loaded: confidential_mode
+2026-10-05 23:57:52,684 [INFO] Module loaded: object_detection
+2026-10-05 23:57:52,686 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-05 23:57:52,687 [INFO] Pico W Morse buttons connected.
+2026-10-05 23:57:52,687 [INFO] Using the caller's Morse serial connection.
+2026-10-05 23:57:52,689 [INFO] ==================================================
+2026-10-05 23:57:52,690 [INFO] BlindAssist Starting...
+2026-10-05 23:57:52,691 [INFO] ==================================================
+2026-10-05 23:57:52,845 [INFO] TTS Manager ready.
+2026-10-05 23:57:52,846 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-05 23:57:55,193 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-05 23:58:08,505 [INFO] Mode 1: OCR Scan
+2026-10-05 23:58:08,506 [INFO] Camera ready via /usr/bin/rpicam-still (macro autofocus mode)
+2026-10-05 23:58:08,528 [INFO] Speaking: "Press button 3 3 times to cancel scanning."
+2026-10-05 23:58:13,077 [INFO] Speaking: "Point the camera toward the page. Keep the page still and mo"
+2026-10-05 23:58:24,272 [INFO] Speaking: "Text is blurry. Hold steady while the camera focuses."
+2026-10-05 23:58:30,302 [INFO] Speaking: "Some text may be cut off. Move back slightly if possible."
+2026-10-05 23:58:36,774 [INFO] Speaking: "Hold steady. I will try reading this image now."
+2026-10-05 23:58:44,289 [INFO] Captured Pi still at 4608x2592
+2026-10-05 23:58:47,398 [INFO] Captured Pi still at 4608x2592
+2026-10-05 23:58:49,204 [INFO] Speaking: "Still capturing the image. Please hold steady."
+2026-10-05 23:58:50,560 [INFO] Captured Pi still at 4608x2592
+2026-10-05 23:58:50,677 [INFO] Selected sharpest Pi camera capture | score=73.3
+2026-10-05 23:58:53,739 [INFO] Speaking: "Reading now."
+2026-10-05 23:58:56,000 [INFO] AFC is enabled with max remote calls: 10.
+2026-10-05 23:59:03,699 [INFO] Speaking: "Still waiting for the online reader. Please wait."
+2026-10-05 23:59:08,718 [INFO] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent "HTTP/1.1 200 OK"
+2026-10-05 23:59:09,813 [INFO] Gemini OCR done in 13813 ms
+2026-10-05 23:59:10,003 [INFO] Audio output device set to plughw:4,0
+2026-10-05 23:59:10,054 [INFO] Speaking: "Press button 1 for private earphones. Press button 2 for spe"
+2026-10-05 23:59:10,635 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmp5i4jpit0.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:59:10,640 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmp5i4jpit0.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:59:10,656 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmpp_935wv6.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:59:10,660 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmpp_935wv6.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:59:10,780 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmpfxeuhvt0.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:59:10,785 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmpfxeuhvt0.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-05 23:59:10,786 [ERROR] Could not play audio on plughw:4,0; falling back to the default output. Confidential routing is NOT in effect.
+2026-10-05 23:59:16,969 [INFO] Audio output device set to plughw:3,0
+2026-10-05 23:59:16,970 [INFO] Speaking: "I found. fp HOW TO WIN OVER 75 YEARS IN PRINT! FRIENDS & INF"
+2026-10-05 23:59:30,978 [INFO] OCR: fp
+HOW TO
+WIN
+OVER
+75 YEARS
+IN PRINT!
+FRIENDS &
+INFLUENCE
+PEOPLE
+THE ONLY BOOK YOU
+NEED TO LEAD YOU TO SUCCESS...
+DALE
+CARNEGIE
+2026-10-06 00:01:40,798 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmpz7v329bj.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:40,803 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmpz7v329bj.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:40,829 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmp0omh8tc7.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:40,834 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmp0omh8tc7.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:40,872 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmp7os76juq.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:40,877 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmp7os76juq.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:40,878 [ERROR] Could not play audio on plughw:4,0; falling back to the default output. Confidential routing is NOT in effect.
+2026-10-06 00:01:53,702 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmp_d3caxch.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:53,708 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmp_d3caxch.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:53,744 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmp8ll0okhd.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:53,749 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmp8ll0okhd.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:53,819 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 --buffer-time 500000 --period-time 100000 /tmp/tmpf45yoo09.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:53,824 [ERROR] Routed playback failed (exit 1): /usr/bin/aplay -q -D plughw:4,0 /tmp/tmpf45yoo09.wav
+STDOUT: 
+STDERR: aplay: main:850: audio open error: Device or resource busy
+
+2026-10-06 00:01:53,825 [ERROR] Could not play audio on plughw:4,0; falling back to the default output. Confidential routing is NOT in effect.
+2026-10-06 00:02:48,671 [WARNING] gTTS unavailable (No text to send to TTS API); using offline engine for 30s.
+2026-10-06 00:03:10,650 [ERROR] Routed playback failed (exit -2): /usr/bin/aplay -q -D plughw:3,0 --buffer-time 500000 --period-time 100000 /tmp/tmpftss1mm_.wav
+STDOUT: 
+STDERR: aplay: pcm_write:2178: write error: Interrupted system call
+
+2026-10-06 00:03:12,595 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-06 00:03:12,926 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-06 00:03:12,928 [INFO] Module loaded: tts
+2026-10-06 00:03:12,956 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-06 00:03:12,957 [INFO] STT engines active: vosk -> google
+2026-10-06 00:03:12,959 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-06 00:03:12,974 [INFO] Module loaded: voice
+2026-10-06 00:03:12,979 [INFO] Module loaded: ai_query
+2026-10-06 00:03:12,981 [INFO] Morse decoder started with auto-timing.
+2026-10-06 00:03:12,982 [INFO] Module loaded: morse
+2026-10-06 00:03:13,040 [INFO] Module loaded: ocr
+2026-10-06 00:03:13,044 [INFO] Module loaded: translator
+2026-10-06 00:03:14,799 [INFO] Module loaded: live_translator
+2026-10-06 00:03:15,208 [INFO] Module loaded: math_solver
+2026-10-06 00:03:15,728 [INFO] Module loaded: gesture_control
+2026-10-06 00:03:15,729 [INFO] Module loaded: emotion_engine
+2026-10-06 00:03:15,731 [INFO] Module loaded: gps_navigator
+2026-10-06 00:03:15,734 [INFO] Module loaded: confidential_mode
+2026-10-06 00:03:15,737 [INFO] Module loaded: object_detection
+2026-10-06 00:03:15,739 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-06 00:03:15,740 [INFO] Pico W Morse buttons connected.
+2026-10-06 00:03:15,740 [INFO] Using the caller's Morse serial connection.
+2026-10-06 00:03:15,743 [INFO] ==================================================
+2026-10-06 00:03:15,744 [INFO] BlindAssist Starting...
+2026-10-06 00:03:15,744 [INFO] ==================================================
+2026-10-06 00:03:15,899 [INFO] TTS Manager ready.
+2026-10-06 00:03:15,900 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-06 00:03:18,565 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-06 00:04:06,291 [INFO] Shutting down...
+2026-10-06 00:04:06,292 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-06 00:04:18,659 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-06 00:04:18,981 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-06 00:04:18,984 [INFO] Module loaded: tts
+2026-10-06 00:04:19,010 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-06 00:04:19,011 [INFO] STT engines active: vosk -> google
+2026-10-06 00:04:19,013 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-06 00:04:19,028 [INFO] Module loaded: voice
+2026-10-06 00:04:19,033 [INFO] Module loaded: ai_query
+2026-10-06 00:04:19,035 [INFO] Morse decoder started with auto-timing.
+2026-10-06 00:04:19,036 [INFO] Module loaded: morse
+2026-10-06 00:04:19,094 [INFO] Module loaded: ocr
+2026-10-06 00:04:19,098 [INFO] Module loaded: translator
+2026-10-06 00:04:20,896 [INFO] Module loaded: live_translator
+2026-10-06 00:04:21,314 [INFO] Module loaded: math_solver
+2026-10-06 00:04:21,843 [INFO] Module loaded: gesture_control
+2026-10-06 00:04:21,845 [INFO] Module loaded: emotion_engine
+2026-10-06 00:04:21,846 [INFO] Module loaded: gps_navigator
+2026-10-06 00:04:21,850 [INFO] Module loaded: confidential_mode
+2026-10-06 00:04:21,853 [INFO] Module loaded: object_detection
+2026-10-06 00:04:21,854 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-06 00:04:21,855 [INFO] Pico W Morse buttons connected.
+2026-10-06 00:04:21,856 [INFO] Using the caller's Morse serial connection.
+2026-10-06 00:04:21,859 [INFO] ==================================================
+2026-10-06 00:04:21,859 [INFO] BlindAssist Starting...
+2026-10-06 00:04:21,860 [INFO] ==================================================
+2026-10-06 00:04:22,016 [INFO] TTS Manager ready.
+2026-10-06 00:04:22,018 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-06 00:04:24,767 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-06 00:04:32,601 [INFO] Shutting down...
+2026-10-06 00:04:34,285 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-06 00:04:38,595 [INFO] TTS Manager shut down.
+2026-10-06 00:04:38,596 [INFO] Shutdown complete.
+2026-10-06 00:12:20,908 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-06 00:12:21,230 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-06 00:12:21,232 [INFO] Module loaded: tts
+2026-10-06 00:12:21,261 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-06 00:12:21,263 [INFO] STT engines active: vosk -> google
+2026-10-06 00:12:21,265 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-06 00:12:21,280 [INFO] Module loaded: voice
+2026-10-06 00:12:21,285 [INFO] Module loaded: ai_query
+2026-10-06 00:12:21,287 [INFO] Morse decoder started with auto-timing.
+2026-10-06 00:12:21,288 [INFO] Module loaded: morse
+2026-10-06 00:12:21,347 [INFO] Module loaded: ocr
+2026-10-06 00:12:21,350 [INFO] Module loaded: translator
+2026-10-06 00:12:23,110 [INFO] Module loaded: live_translator
+2026-10-06 00:12:23,523 [INFO] Module loaded: math_solver
+2026-10-06 00:12:24,043 [INFO] Module loaded: gesture_control
+2026-10-06 00:12:24,044 [INFO] Module loaded: emotion_engine
+2026-10-06 00:12:24,046 [INFO] Module loaded: gps_navigator
+2026-10-06 00:12:24,049 [INFO] Module loaded: confidential_mode
+2026-10-06 00:12:24,052 [INFO] Module loaded: object_detection
+2026-10-06 00:12:24,053 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-06 00:12:24,054 [INFO] Pico W Morse buttons connected.
+2026-10-06 00:12:24,055 [INFO] Using the caller's Morse serial connection.
+2026-10-06 00:12:24,057 [INFO] ==================================================
+2026-10-06 00:12:24,058 [INFO] BlindAssist Starting...
+2026-10-06 00:12:24,058 [INFO] ==================================================
+2026-10-06 00:12:24,213 [INFO] TTS Manager ready.
+2026-10-06 00:12:24,214 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-06 00:12:26,569 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-06 00:12:53,036 [INFO] Shutting down...
+2026-10-06 00:12:53,038 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-06 00:12:55,557 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-06 00:12:55,882 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-06 00:12:55,886 [INFO] Module loaded: tts
+2026-10-06 00:12:55,930 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-06 00:12:55,932 [INFO] STT engines active: vosk -> google
+2026-10-06 00:12:55,935 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-06 00:12:55,951 [INFO] Module loaded: voice
+2026-10-06 00:12:55,956 [INFO] Module loaded: ai_query
+2026-10-06 00:12:55,958 [INFO] Morse decoder started with auto-timing.
+2026-10-06 00:12:55,959 [INFO] Module loaded: morse
+2026-10-06 00:12:56,018 [INFO] Module loaded: ocr
+2026-10-06 00:12:56,021 [INFO] Module loaded: translator
+2026-10-06 00:12:57,826 [INFO] Module loaded: live_translator
+2026-10-06 00:12:58,236 [INFO] Module loaded: math_solver
+2026-10-06 00:12:58,758 [INFO] Module loaded: gesture_control
+2026-10-06 00:12:58,760 [INFO] Module loaded: emotion_engine
+2026-10-06 00:12:58,761 [INFO] Module loaded: gps_navigator
+2026-10-06 00:12:58,765 [INFO] Module loaded: confidential_mode
+2026-10-06 00:12:58,767 [INFO] Module loaded: object_detection
+2026-10-06 00:12:58,769 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-06 00:12:58,770 [INFO] Pico W Morse buttons connected.
+2026-10-06 00:12:58,770 [INFO] Using the caller's Morse serial connection.
+2026-10-06 00:12:58,772 [INFO] ==================================================
+2026-10-06 00:12:58,773 [INFO] BlindAssist Starting...
+2026-10-06 00:12:58,774 [INFO] ==================================================
+2026-10-06 00:12:58,929 [INFO] TTS Manager ready.
+2026-10-06 00:12:58,930 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-06 00:13:03,019 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-06 00:13:34,599 [INFO] Shutting down...
+2026-10-06 00:13:34,601 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-06 00:13:44,064 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-06 00:13:44,390 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-06 00:13:44,392 [INFO] Module loaded: tts
+2026-10-06 00:13:44,418 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-06 00:13:44,420 [INFO] STT engines active: vosk -> google
+2026-10-06 00:13:44,422 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-06 00:13:44,438 [INFO] Module loaded: voice
+2026-10-06 00:13:44,443 [INFO] Module loaded: ai_query
+2026-10-06 00:13:44,445 [INFO] Morse decoder started with auto-timing.
+2026-10-06 00:13:44,446 [INFO] Module loaded: morse
+2026-10-06 00:13:44,504 [INFO] Module loaded: ocr
+2026-10-06 00:13:44,508 [INFO] Module loaded: translator
+2026-10-06 00:13:46,274 [INFO] Module loaded: live_translator
+2026-10-06 00:13:46,685 [INFO] Module loaded: math_solver
+2026-10-06 00:13:47,207 [INFO] Module loaded: gesture_control
+2026-10-06 00:13:47,208 [INFO] Module loaded: emotion_engine
+2026-10-06 00:13:47,210 [INFO] Module loaded: gps_navigator
+2026-10-06 00:13:47,213 [INFO] Module loaded: confidential_mode
+2026-10-06 00:13:47,216 [INFO] Module loaded: object_detection
+2026-10-06 00:13:47,218 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-06 00:13:47,218 [INFO] Pico W Morse buttons connected.
+2026-10-06 00:13:47,219 [INFO] Using the caller's Morse serial connection.
+2026-10-06 00:13:47,221 [INFO] ==================================================
+2026-10-06 00:13:47,222 [INFO] BlindAssist Starting...
+2026-10-06 00:13:47,223 [INFO] ==================================================
+2026-10-06 00:13:47,378 [INFO] TTS Manager ready.
+2026-10-06 00:13:47,379 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-06 00:13:49,833 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-06 00:14:09,413 [INFO] Shutting down...
+2026-10-06 00:14:09,414 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-06 00:15:45,204 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-06 00:15:45,529 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-06 00:15:45,531 [INFO] Module loaded: tts
+2026-10-06 00:15:45,559 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-06 00:15:45,560 [INFO] STT engines active: vosk -> google
+2026-10-06 00:15:45,562 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-06 00:15:45,577 [INFO] Module loaded: voice
+2026-10-06 00:15:45,582 [INFO] Module loaded: ai_query
+2026-10-06 00:15:45,584 [INFO] Morse decoder started with auto-timing.
+2026-10-06 00:15:45,585 [INFO] Module loaded: morse
+2026-10-06 00:15:45,643 [INFO] Module loaded: ocr
+2026-10-06 00:15:45,647 [INFO] Module loaded: translator
+2026-10-06 00:15:47,408 [INFO] Module loaded: live_translator
+2026-10-06 00:15:47,818 [INFO] Module loaded: math_solver
+2026-10-06 00:15:48,339 [INFO] Module loaded: gesture_control
+2026-10-06 00:15:48,341 [INFO] Module loaded: emotion_engine
+2026-10-06 00:15:48,342 [INFO] Module loaded: gps_navigator
+2026-10-06 00:15:48,346 [INFO] Module loaded: confidential_mode
+2026-10-06 00:15:48,349 [INFO] Module loaded: object_detection
+2026-10-06 00:15:48,350 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-06 00:15:48,351 [INFO] Pico W Morse buttons connected.
+2026-10-06 00:15:48,352 [INFO] Using the caller's Morse serial connection.
+2026-10-06 00:15:48,354 [INFO] ==================================================
+2026-10-06 00:15:48,355 [INFO] BlindAssist Starting...
+2026-10-06 00:15:48,355 [INFO] ==================================================
+2026-10-06 00:15:48,510 [INFO] TTS Manager ready.
+2026-10-06 00:15:48,511 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-06 00:15:51,258 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-06 00:16:13,321 [INFO] Shutting down...
+2026-10-06 00:16:13,323 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-06 00:16:35,079 [INFO] settings.json uses the old key 'bone_device'; rename it to 'earphone_device'. Reading it as the earphone for now.
+2026-10-06 00:16:35,407 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-06 00:16:35,409 [INFO] Module loaded: tts
+2026-10-06 00:16:35,436 [INFO] PocketSphinx not installed — last-resort offline STT unavailable.
+2026-10-06 00:16:35,437 [INFO] STT engines active: vosk -> google
+2026-10-06 00:16:35,438 [INFO] Recordings will be saved to /mnt/aet_usb/recordings
+2026-10-06 00:16:35,454 [INFO] Module loaded: voice
+2026-10-06 00:16:35,459 [INFO] Module loaded: ai_query
+2026-10-06 00:16:35,461 [INFO] Morse decoder started with auto-timing.
+2026-10-06 00:16:35,462 [INFO] Module loaded: morse
+2026-10-06 00:16:35,520 [INFO] Module loaded: ocr
+2026-10-06 00:16:35,524 [INFO] Module loaded: translator
+2026-10-06 00:16:37,277 [INFO] Module loaded: live_translator
+2026-10-06 00:16:37,687 [INFO] Module loaded: math_solver
+2026-10-06 00:16:38,207 [INFO] Module loaded: gesture_control
+2026-10-06 00:16:38,208 [INFO] Module loaded: emotion_engine
+2026-10-06 00:16:38,210 [INFO] Module loaded: gps_navigator
+2026-10-06 00:16:38,213 [INFO] Module loaded: confidential_mode
+2026-10-06 00:16:38,216 [INFO] Module loaded: object_detection
+2026-10-06 00:16:38,217 [INFO] Connected to Pico W on /dev/ttyACM0
+2026-10-06 00:16:38,218 [INFO] Pico W Morse buttons connected.
+2026-10-06 00:16:38,219 [INFO] Using the caller's Morse serial connection.
+2026-10-06 00:16:38,221 [INFO] ==================================================
+2026-10-06 00:16:38,222 [INFO] BlindAssist Starting...
+2026-10-06 00:16:38,222 [INFO] ==================================================
+2026-10-06 00:16:38,377 [INFO] TTS Manager ready.
+2026-10-06 00:16:38,378 [INFO] Speaking: "Welcome to Blind Assist."
+2026-10-06 00:16:41,106 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
+2026-10-06 00:17:01,863 [INFO] Shutting down...
+2026-10-06 00:17:01,864 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
