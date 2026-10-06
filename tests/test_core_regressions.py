@@ -386,6 +386,22 @@ class RepairedDefectTests(unittest.TestCase):
         self.assertTrue(hasattr(tts, "flush"))
         self.assertTrue(hasattr(tts, "wait_until_idle"))
 
+    def test_tts_queue_keeps_route_across_mode_transition(self):
+        """A queued message must not move when the next mode changes output."""
+        from modules import tts
+
+        manager = tts.TTSManager.__new__(tts.TTSManager)
+        manager.running = True
+        manager.queue = mock.Mock()
+        with mock.patch.object(tts, "_current_device", "speaker"):
+            manager.speak("speaker message", "eng")
+        with mock.patch.object(tts, "_current_device", "earphone"):
+            manager.speak("earphone message", "eng")
+
+        queued, next_queued = [call.args[0] for call in manager.queue.put.call_args_list]
+        self.assertEqual(queued.device, "speaker")
+        self.assertEqual(next_queued.device, "earphone")
+
     def test_tts_mp3_uses_music_channel_not_sound(self):
         """gTTS returns MP3; pygame.mixer.Sound cannot decode MP3 buffers."""
         from modules import tts
@@ -632,6 +648,103 @@ class RepairedDefectTests(unittest.TestCase):
         translator.translate_ex.assert_called_once_with(
             "नमस्ते", from_lang="hi", to_lang="en", privacy=False
         )
+
+    def test_translate_voice_button_does_not_enter_morse_input(self):
+        main = importlib.import_module("main")
+        translator = mock.Mock()
+        translator.LANG_TO_TTS = {"en": "eng", "hi": "hin", "gu": "guj"}
+        translator.translate_ex.return_value = mock.Mock(
+            text="hello", lang="en", translated=True, source="mock", error=None
+        )
+        listened = mock.Mock(return_value="spoken phrase")
+
+        with mock.patch.dict(main._modules, {
+            "translator": translator,
+            "voice": mock.Mock(),
+            "privacy": mock.Mock(
+                ask_confidentiality=mock.Mock(return_value="NORMAL")
+            ),
+        }), \
+             mock.patch.object(main, "_select_with_buttons",
+                               side_effect=["3", "1", "2"]), \
+             mock.patch.object(main, "_listen_until_stopped", listened), \
+             mock.patch.object(main, "_morse_type_sentence") as morse, \
+             mock.patch.object(main, "_speak"):
+            main.mode_translate()
+
+        listened.assert_called_once()
+        morse.assert_not_called()
+
+    def test_voice_ask_uses_microphone_path_not_morse_sentence_path(self):
+        main = importlib.import_module("main")
+        ai_query = mock.Mock()
+        listened = mock.Mock(return_value="spoken question")
+
+        with mock.patch.dict(main._modules, {
+            "voice": mock.Mock(),
+            "ai_query": ai_query,
+        }), \
+             mock.patch.object(main, "_listen_until_stopped", listened), \
+             mock.patch.object(main, "_morse_type_sentence") as morse, \
+             mock.patch.object(main, "_speak"):
+            main.mode_voice_ask()
+
+        listened.assert_called_once_with(
+            "en-IN", prompt="Voice mode. Ask your question now."
+        )
+        morse.assert_not_called()
+        ai_query.ask_ai_and_speak.assert_called_once()
+
+    def test_translate_type_button_does_not_enter_morse_input(self):
+        main = importlib.import_module("main")
+        translator = mock.Mock()
+        translator.LANG_TO_TTS = {"en": "eng", "hi": "hin", "gu": "guj"}
+        translator.translate_ex.return_value = mock.Mock(
+            text="નમસ્તે", lang="gu", translated=True, source="mock", error=None
+        )
+
+        with mock.patch.dict(main._modules, {
+            "translator": translator,
+            "privacy": mock.Mock(
+                ask_confidentiality=mock.Mock(return_value="NORMAL")
+            ),
+        }), \
+             mock.patch.object(main, "_select_with_buttons",
+                               side_effect=["1", "1", "3"]), \
+             mock.patch.object(main, "_keyboard_input", return_value="hello"), \
+             mock.patch.object(main, "_morse_type_sentence") as morse, \
+             mock.patch.object(main, "_speak"):
+            main.mode_translate()
+
+        translator.translate_ex.assert_called_once_with(
+            "hello", from_lang="en", to_lang="gu", privacy=False
+        )
+        morse.assert_not_called()
+
+    def test_live_translation_double_button_enters_live_mode(self):
+        main = importlib.import_module("main")
+        translator = mock.Mock()
+        live_module = mock.Mock()
+        live_instance = live_module.LiveTranslator.return_value
+        stop_check = mock.Mock(return_value=False)
+        cancel_stop = mock.Mock()
+
+        with mock.patch.dict(main._modules, {
+            "translator": translator,
+            "live_translator": live_module,
+        }), \
+             mock.patch.object(main, "_select_with_buttons",
+                               side_effect=["33", "1"]), \
+             mock.patch.object(main, "_button3_stop_signal",
+                               return_value=(stop_check, cancel_stop)) as stop, \
+             mock.patch.object(main, "_settle_button_input"), \
+             mock.patch.object(main, "_speak"):
+            main.mode_translate()
+
+        live_module.LiveTranslator.assert_called_once_with(lang_pair="en-gu")
+        live_instance.run_live.assert_called_once_with(stop_check=stop_check)
+        stop.assert_called_once_with(required_presses=2, confirm_stops=True)
+        cancel_stop.assert_called_once_with()
 
     # ── ai_query: timeouts that did not time out ─────────────────────────
     def test_ask_ai_does_not_create_a_pool_per_call(self):

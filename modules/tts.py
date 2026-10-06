@@ -416,11 +416,12 @@ class _Utterance:
     def __init__(self, text, lang, device=None):
         self.text = text
         self.lang = lang
-        # None → use whatever switch_output_device() last selected. A value
-        # pins *this* utterance to one card without disturbing that global
-        # selection, so a routed answer cannot leave Confidential Mode's
-        # device state changed behind it.
-        self.device = device
+        # The route is captured when the utterance is queued. Looking up the
+        # global route later, when the worker finally starts playback, allows
+        # a mode transition to redirect an earlier message to the next mode's
+        # output. A value pins *this* utterance to one card without disturbing
+        # the global selection.
+        self.device = _current_device if device is None else device
         self.done = threading.Event()
 
 
@@ -819,7 +820,13 @@ class TTSManager:
             print(f"[TTS after shutdown] {text}", flush=True)
             return
 
-        item = _Utterance(str(text), lang, device)
+        # Capture the selected output at enqueue time. This is important for
+        # non-blocking speech: callers commonly queue a status message and
+        # immediately switch between speaker and earphone for the next step.
+        # Without this snapshot, the worker can play that old message on the
+        # newly selected route.
+        queued_device = _current_device if device is None else device
+        item = _Utterance(str(text), lang, queued_device)
         self.queue.put(item)
         if block:
             item.done.wait(timeout=timeout)
@@ -981,4 +988,3 @@ if __name__ == "__main__":
         except (EOFError, KeyboardInterrupt):
             break
     shutdown()
-

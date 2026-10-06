@@ -99,8 +99,9 @@ Button 1 starts the explanation; Button 2 skips it. Old events are cleared befor
 the prompt, presses made during the prompt are retained, and unrelated buttons
 are ignored. No microphone fallback runs for this question.
 
-Privacy selection is buttons only: Button 1 selects private earphones and Button 2
-selects the speaker. Its response window starts after the prompt and is at least
-15 seconds. No selection, missing buttons, or a serial error cancels playback;
+Privacy selection is buttons only: the choice prompt is played on the main
+speaker, then Button 1 selects private earphones and Button 2 selects the
+speaker. Its response window starts after the prompt and is at least 15 seconds.
+No selection, missing buttons, or a serial error cancels playback;
 there is no spoken-answer fallback or automatic public selection. This applies
 to OCR, translation privacy selection, and the standalone privacy demonstration.

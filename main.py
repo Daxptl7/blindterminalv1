@@ -196,18 +196,22 @@ _STOP_PRESSES = int(_settings.get("voice_stop_press_count", 3))
 _STOP_PRESS_WINDOW_S = float(_settings.get("voice_stop_press_window_seconds", 4.0))
 
 
-def _button3_stop_signal():
+def _button3_stop_signal(required_presses=None, confirm_stops=False):
     """Watch Button 3 in the background; return (stop_check, cancel).
 
     stop_check() is polled by voice.listen() and returns True once Button 3 has
-    been pressed _STOP_PRESSES times in a row, each within
+    been pressed the requested number of times in a row, each within
     _STOP_PRESS_WINDOW_S of the last. cancel() stops the watcher thread.
+
+    Live Translation passes ``required_presses=2`` and ``confirm_stops=True``
+    because its public control is a double-press. Voice recording keeps the
+    normal three-press safety rule.
 
     Only presses of Button 3 count. The Pico firmware emits RAW:3 on every
     press of it and follows up with WORD_SPACE or CONFIRM once it has decided
-    whether the press was single or double — those follow-ups are ignored here,
-    so a triple press registers as exactly three RAW:3 messages regardless of
-    how the firmware classifies the gesture.
+    whether the press was single or double. Voice mode ignores those follow-ups
+    except for the existing safety accounting; Live Translation treats CONFIRM
+    as its explicit double-press stop signal.
 
     Returns (None, no-op) when no Pico W is attached, so callers degrade to the
     keyboard/backstop path instead of recording into a recording that nothing
@@ -217,6 +221,7 @@ def _button3_stop_signal():
     if serial is None:
         return None, (lambda: None)
 
+    press_limit = _STOP_PRESSES if required_presses is None else int(required_presses)
     stopped = threading.Event()
     finished = threading.Event()
 
@@ -236,6 +241,9 @@ def _button3_stop_signal():
             now = time.time()
             if msg.startswith("RAW:3"):
                 presses = presses + 1 if (now - last_press) <= _STOP_PRESS_WINDOW_S else 1
+            elif msg == "CONFIRM" and confirm_stops:
+                stopped.set()
+                return
             elif msg == "CONFIRM":
                 # The firmware only emits CONFIRM when it has decided two
                 # presses were a double-press, and while it is making that
@@ -248,8 +256,8 @@ def _button3_stop_signal():
                 continue
 
             last_press = now
-            logger.info(f"Stop button press {presses} of {_STOP_PRESSES}")
-            if presses >= _STOP_PRESSES:
+            logger.info(f"Stop button press {presses} of {press_limit}")
+            if presses >= press_limit:
                 stopped.set()
                 return
 
@@ -261,6 +269,22 @@ def _button3_stop_signal():
         watcher.join(timeout=1)
 
     return stopped.is_set, _cancel
+
+
+def _settle_button_input():
+    """Let the Pico finish classifying the mode-selection press.
+
+    Buttons 1 and 2 are Morse symbols. The firmware emits their decoded
+    LETTER message after the letter gap, even when the raw press already
+    selected a menu item. If voice/live input starts immediately, that late
+    message can be mistaken for the next input mode's data. Wait out that
+    classification window and discard only the stale messages before opening
+    the microphone or live interpreter.
+    """
+    if _morse_serial_singleton is None:
+        return
+    time.sleep(_BUTTON_LETTER_SETTLE_S)
+    _drain_button_messages()
 
 
 def _listen_until_stopped(lang: str = "en-IN", prompt: str | None = None):
@@ -280,11 +304,9 @@ def _listen_until_stopped(lang: str = "en-IN", prompt: str | None = None):
         except Exception as e:
             logger.debug(f"Could not clear stale button presses before recording: {e}")
 
-    stop_check, cancel = _button3_stop_signal()
-
     if prompt:
         _speak(prompt)
-    if stop_check is not None:
+    if _morse_serial_singleton is not None:
         _speak(f"Take as long as you need. Press button 3 "
                f"{_STOP_PRESSES} times when you are finished.", block=True)
     elif _STDIN_IS_TTY:
@@ -297,6 +319,12 @@ def _listen_until_stopped(lang: str = "en-IN", prompt: str | None = None):
             _modules["tts"].wait_until_idle(timeout=15)
         except Exception as e:
             logger.debug(f"Could not wait for TTS to drain: {e}")
+
+    # Do not start the recording watcher until the selection prompt and all
+    # delayed Morse classification messages are finished. This keeps a
+    # Button-1/3 mode selection from becoming input for the new voice mode.
+    _settle_button_input()
+    stop_check, cancel = _button3_stop_signal()
 
     try:
         return _modules["voice"].listen(lang, stop_check=stop_check, manual_stop=True)
@@ -408,7 +436,7 @@ def mode_ocr_scan():
         # broken "explain this?" response listener.
         #
         # speak_document_with_privacy_check() does three things atomically:
-        #   1. Asks "confidential or normal?" through the earphone only
+        #   1. Asks "confidential or normal?" through the main speaker
         #   2. Waits for Button 1 (private) or Button 2 (speaker) only
         #   3. Routes the spoken text to ONLY the correct audio path
         # Nothing is read aloud before the user makes their choice.
@@ -791,7 +819,12 @@ def mode_translate():
             block=True
         )
 
-        stop_check, cancel_stop = _button3_stop_signal()
+        # Live mode has its own control: a double Button-3 press ends the
+        # conversation. Do not use the voice-recording three-press rule here.
+        _settle_button_input()
+        stop_check, cancel_stop = _button3_stop_signal(
+            required_presses=2, confirm_stops=True
+        )
         try:
             live_mod = _modules["live_translator"]
             interpreter = live_mod.LiveTranslator(lang_pair=pair)

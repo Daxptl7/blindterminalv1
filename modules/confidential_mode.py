@@ -79,35 +79,38 @@ class PrivateAudio:
 
 def ask_confidentiality(morse_serial=None):
     """Button 1 selects earphones, Button 2 selects speaker; None cancels."""
-    with PrivateAudio():
-        if morse_serial is None:
-            tts.speak("Buttons are not connected. Playback cancelled.", "en", block=True)
-            return None
-        try:
-            # Clear old presses before the prompt, never after it. A press
-            # made during speech stays queued for the selection loop.
-            while morse_serial.get_message(timeout=0.05) is not None:
-                pass
-            tts.speak("Press button 1 for private earphones. Press button 2 for speaker.",
-                      "en", block=True)
-            deadline = time.monotonic() + PROMPT_TIMEOUT
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                button = morse_serial.wait_for_raw_button(timeout=remaining)
-                if button == 1:
-                    return "PRIVATE"
-                if button == 2:
-                    return "NORMAL"
-                if button is None:
-                    break
-                # Ignore unrelated buttons; do not consume the choice window.
-        except Exception:
-            logger.exception("Privacy button input failed")
-            tts.speak("Button input failed. Playback cancelled.", "en", block=True)
-            return None
-        tts.speak("No privacy option selected. Playback cancelled.", "en", block=True)
+    # The choice prompt must be audible from the device speaker. It is spoken
+    # before the user has selected a destination, so routing it through the
+    # private output made the later speaker/earphone choice sound reversed.
+    enable_speaker()
+    if morse_serial is None:
+        tts.speak("Buttons are not connected. Playback cancelled.", "en", block=True)
+        return None
+    try:
+        # Clear old presses before the prompt, never after it. A press made
+        # during speech stays queued for the selection loop.
+        while morse_serial.get_message(timeout=0.05) is not None:
+            pass
+        tts.speak("Press button 1 for private earphones. Press button 2 for speaker.",
+                  "en", block=True)
+        deadline = time.monotonic() + PROMPT_TIMEOUT
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            button = morse_serial.wait_for_raw_button(timeout=remaining)
+            if button == 1:
+                return "PRIVATE"
+            if button == 2:
+                return "NORMAL"
+            if button is None:
+                break
+            # Ignore unrelated buttons; do not consume the choice window.
+    except Exception:
+        logger.exception("Privacy button input failed")
+        tts.speak("Button input failed. Playback cancelled.", "en", block=True)
+        return None
+    tts.speak("No privacy option selected. Playback cancelled.", "en", block=True)
     return None
 
 

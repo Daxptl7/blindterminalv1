@@ -9,7 +9,8 @@ class PrivacyButtonTests(unittest.TestCase):
     def setUp(self):
         self.serial = mock.Mock()
         self.serial.get_message.return_value = None
-        self.audio = mock.patch.object(privacy, 'PrivateAudio').start()
+        self.audio_patch = mock.patch.object(privacy, 'PrivateAudio')
+        self.audio = self.audio_patch.start()
         self.speak = mock.patch.object(privacy.tts, 'speak').start()
         self.addCleanup(mock.patch.stopall)
 
@@ -18,6 +19,28 @@ class PrivacyButtonTests(unittest.TestCase):
             self.serial.wait_for_raw_button.return_value = button
             self.assertEqual(privacy.ask_confidentiality(self.serial), expected)
         self.assertTrue(all('say ' not in call.args[0] for call in self.speak.call_args_list))
+
+    def test_choice_prompt_is_on_speaker_before_route_is_selected(self):
+        self.serial.wait_for_raw_button.return_value = 2
+        with mock.patch.object(privacy, 'enable_speaker') as speaker:
+            self.assertEqual(privacy.ask_confidentiality(self.serial), 'NORMAL')
+        speaker.assert_called_once_with()
+
+    def test_selected_route_is_used_for_follow_up_audio(self):
+        self.serial.wait_for_raw_button.side_effect = [1, 2]
+        self.audio_patch.stop()
+        with mock.patch.object(privacy, 'enable_earphone') as earphone, \
+                mock.patch.object(privacy, 'enable_speaker') as speaker:
+            self.assertEqual(
+                privacy.speak_with_privacy_check('private text', 'eng', self.serial),
+                'PRIVATE',
+            )
+            self.assertEqual(
+                privacy.speak_with_privacy_check('public text', 'eng', self.serial),
+                'NORMAL',
+            )
+        self.assertGreaterEqual(earphone.call_count, 1)
+        self.assertGreaterEqual(speaker.call_count, 2)
 
     def test_press_during_prompt_is_preserved(self):
         queue = []
