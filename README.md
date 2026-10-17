@@ -1,6 +1,6 @@
 # 👁️ BlindAssist — Accessible Educational & Assistive Terminal
 
-[![Project Status](https://img.shields.io/badge/status-production--ready-success.svg)](#)
+[![Project Status](https://img.shields.io/badge/status-device--validation--required-orange.svg)](docs/DEPLOYMENT.md)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.13-blue.svg)](#)
 [![Hardware Target](https://img.shields.io/badge/hardware-macOS%20%7C%20Raspberry%20Pi%205-red.svg)](#)
 [![Architecture](https://img.shields.io/badge/RAG-Hybrid%20BM25%20%2B%20FAISS%20%2B%20Cohere-orange.svg)](#)
@@ -54,7 +54,7 @@ Blind-Assist/
 
 ## 🧠 Research-Grade RAG Architecture (`services/`)
 
-The retrieval engine under `Blindterminal/services/` provides high-precision semantic groundedness and 100% offline resilience.
+The retrieval engine under `Blindterminal/services/` provides high-precision semantic groundedness and offline operation only for locally provisioned and verified capabilities.
 
 ```mermaid
 graph TD
@@ -143,6 +143,11 @@ BlindAssist follows a **Star Topology** for software decoupling:
 
 ## 🚀 Setup & Running
 
+Read [deployment and release gates](docs/DEPLOYMENT.md) before preparing a device.
+Privacy is selected before capture; private sessions use local processing and
+verified earphones only. GPS simulation is explicit and walking navigation is
+disabled by default pending field validation.
+
 ### 📋 Prerequisites
 
 1. **Python 3.10+** (tested on Python 3.13)
@@ -160,22 +165,22 @@ BlindAssist follows a **Star Topology** for software decoupling:
    ```bash
    git clone https://github.com/Daxptl7/Blind-Assist.git
    cd Blind-Assist
-   pip3 install -r requirements.txt
+   ./install.sh desktop
    ```
 
-2. Configure your Gemini API key in `Blindterminal/config/settings.json`:
+2. Configure your Gemini API key in `config/settings.json`:
 
    ```json
    {
      "gemini_api_key": "YOUR_GEMINI_API_KEY",
-     "gemini_model_name": "gemini-3.5-flash",
+     "gemini_model_name": "gemini-2.5-flash",
      "embedding_provider": "gemini"
    }
    ```
 
 3. Run the complete integrated terminal:
    ```bash
-   python3 Blindterminal/main.py
+   python3 main.py
    ```
 
 ---
@@ -184,7 +189,7 @@ BlindAssist follows a **Star Topology** for software decoupling:
 
 For complete wiring diagrams, bill of materials, GPIO pins configuration, and step-by-step setup details, please see:
 
-👉 **[docs/HARDWARE_SETUP.md](file:///Applications/Blind/Blind-Assist/docs/HARDWARE_SETUP.md)**
+👉 **[device deployment and validation](docs/DEPLOYMENT.md)**
 
 ---
 

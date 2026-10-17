@@ -1,0 +1,25 @@
+[Unit]
+Description=BlindAssist accessible terminal
+After=sound.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=blindassist
+Group=blindassist
+SupplementaryGroups=audio video dialout
+WorkingDirectory=/opt/blindassist
+ExecStartPre=/opt/blindassist/.venv/bin/python /opt/blindassist/selftest.py --profile device --vision
+ExecStart=/opt/blindassist/.venv/bin/python /opt/blindassist/main.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

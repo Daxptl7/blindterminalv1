@@ -1,0 +1,15 @@
+# Hardware-free regression environment. Device installs use requirements.txt.
+numpy>=1.26,<3
+Pillow>=10,<13
+opencv-python-headless>=4.9,<6
+pytesseract>=0.3.10,<0.4
+pyttsx3>=2.90,<3
+requests>=2.31,<3
+python-dotenv>=1,<2
+pyserial>=3.5,<4
+pynmea2>=1.19,<2
+rank-bm25>=0.2.2,<0.3
+google-genai>=2.14,<3
+SpeechRecognition>=3.10,<4
+sympy>=1.12,<2
+scipy>=1.11,<2
