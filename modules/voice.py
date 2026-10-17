@@ -107,6 +107,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from modules.privacy_policy import current_policy
 import time
 import wave
 
@@ -125,12 +126,8 @@ LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _load_settings() -> dict:
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"Could not read {CONFIG_PATH} ({e}); using defaults.")
-        return {}
+    from modules.config_loader import load_settings
+    return load_settings()
 
 
 _settings = _load_settings()
@@ -174,6 +171,24 @@ OPEN_TRANSIENT_MS = int(_settings.get("voice_open_transient_ms", 250))
 
 RECORDING_DIR_SETTING = _settings.get("voice_recording_dir", "data/recordings")
 KEEP_RECORDINGS = int(_settings.get("voice_keep_recordings", 20))  # <=0 = keep all
+_private_recordings = set()
+_private_recordings_lock = threading.Lock()
+
+
+def clear_private_recordings():
+    global _last_recording
+    with _private_recordings_lock:
+        for path in list(_private_recordings):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.error("Could not remove a temporary private recording.")
+                continue
+            _private_recordings.discard(path)
+            if _last_recording == path:
+                _last_recording = None
 BEEP_ENABLED = bool(_settings.get("voice_beep", True))
 UNMUTE_MIC = bool(_settings.get("voice_unmute_mic", True))
 
@@ -364,8 +379,12 @@ def _button3_stop_watcher() -> Tuple[Optional[Callable[[], bool]], Callable[[], 
                 stopped.set()
                 return
 
-    threading.Thread(target=_watch, daemon=True).start()
-    return stopped.is_set, finished.set
+    watcher = threading.Thread(target=_watch, daemon=True)
+    watcher.start()
+    def cancel():
+        finished.set()
+        watcher.join(timeout=1)
+    return stopped.is_set, cancel
 
 
 def _wait_for_button(valid: Tuple[str, ...], timeout: float) -> Optional[str]:
@@ -549,7 +568,7 @@ def _engine_available(name: str, lang: str = "en-IN") -> bool:
             code in _vosk_model_dirs or _find_vosk_model(code) is not None
         )
     if name == "google":
-        return SR_AVAILABLE
+        return SR_AVAILABLE and current_policy().allow_cloud
     if name == "sphinx":
         return code == "en" and SR_AVAILABLE and SPHINX_AVAILABLE
     return False
@@ -1032,21 +1051,28 @@ def record(stop_check: Optional[Callable[[], bool]] = None,
                        "Please check that it is switched on and turned up.")
             return None
 
-        if not RECORDING_DIR:
+        if not RECORDING_DIR and current_policy().allow_persistence:
             _set_error("There is nowhere to save the recording. "
                        "Please check the USB drive.")
             return None
 
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        out_path = os.path.join(RECORDING_DIR, f"voice_{stamp}.wav")
+        if current_policy().allow_persistence:
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            out_path = os.path.join(RECORDING_DIR, f"voice_{stamp}_{time.time_ns()}.wav")
+        else:
+            descriptor, out_path = tempfile.mkstemp(prefix="blindassist-private-", suffix=".wav")
+            os.close(descriptor)
+            with _private_recordings_lock:
+                _private_recordings.add(out_path)
         if not _write_wav(out_path, _to_pcm(samples)):
             _set_error("The recording could not be saved to the USB drive.")
             return None
 
-        _prune_recordings()
+        if current_policy().allow_persistence:
+            _prune_recordings()
         _last_recording = out_path
-        logger.info(f"Saved {out_path} ({seconds:.1f}s)")
-        if tty:
+        logger.info("Recording captured (%s seconds).", round(seconds, 1))
+        if tty and not current_policy().private:
             print(f"💾 Saved: {out_path}  ({seconds:.1f}s, {level:.0f} dBFS, "
                   f"stopped by {stopped_by})")
         return out_path
@@ -1066,6 +1092,12 @@ def record(stop_check: Optional[Callable[[], bool]] = None,
 # ── PLAYBACK ────────────────────────────────────────────────
 def play(path: Optional[str] = None, device: Optional[str] = None) -> bool:
     """Play a recording on a given card. Defaults to the latest, on the speaker."""
+    if current_policy().private or (device and device == EARPHONE_DEVICE):
+        from modules import tts
+        try:
+            device = tts.require_private_output(EARPHONE_DEVICE)
+        except tts.AudioRoutingError:
+            return False
     target = path or _last_recording
     if not target or not os.path.exists(target):
         logger.warning("Nothing to play back.")
@@ -1135,11 +1167,17 @@ def play_with_privacy_prompt(path: Optional[str] = None,
             time.sleep(0.2)
 
     if choice == "1":
+        from modules import tts
+        try:
+            tts.require_private_output(EARPHONE_DEVICE)
+        except tts.AudioRoutingError:
+            return False
         device, where = EARPHONE_DEVICE, "earphone"
-    else:
+    elif choice == "2":
         device, where = SPEAKER_DEVICE, "speaker"
-        if choice is None:
-            logger.info(f"No answer in {wait_s:.0f}s — defaulting to the speaker.")
+    else:
+        logger.info("No privacy selection; playback cancelled.")
+        return False
 
     logger.info(f"Playing {os.path.basename(target)} on the {where} ({device}).")
     if tty:
@@ -1160,7 +1198,7 @@ def _transcribe_vosk(pcm: bytes, lang: str = "en-IN") -> Optional[str]:
             recognizer.AcceptWaveform(pcm[i:i + 4000])
         text = json.loads(recognizer.FinalResult()).get("text", "").strip()
         if text:
-            logger.info(f"Vosk transcribed: '{text}'")
+            logger.info("Vosk transcription completed (%s characters).", len(text))
             return text
         return None
     except Exception as e:
@@ -1170,14 +1208,15 @@ def _transcribe_vosk(pcm: bytes, lang: str = "en-IN") -> Optional[str]:
 
 def _transcribe_google(pcm: bytes, lang: str) -> Optional[str]:
     """Online, free tier. ~92-97% on clean speech."""
-    if not SR_AVAILABLE:
+    if not current_policy().allow_cloud or not SR_AVAILABLE:
         return None
     try:
         recognizer = sr.Recognizer()
+        recognizer.operation_timeout = 8
         text = recognizer.recognize_google(sr.AudioData(pcm, SAMPLE_RATE, 2),
                                            language=lang).strip()
         if text:
-            logger.info(f"Google transcribed: '{text}'")
+            logger.info("Google transcription completed (%s characters).", len(text))
             return text
         return None
     except sr.UnknownValueError:
@@ -1203,7 +1242,7 @@ def _transcribe_sphinx(pcm: bytes) -> Optional[str]:
         recognizer = sr.Recognizer()
         text = recognizer.recognize_sphinx(sr.AudioData(pcm, SAMPLE_RATE, 2)).strip()
         if text:
-            logger.info(f"Sphinx transcribed: '{text}'")
+            logger.info("Sphinx transcription completed (%s characters).", len(text))
             return text
         return None
     except sr.UnknownValueError:
@@ -1304,16 +1343,23 @@ def listen(lang: str = "en-IN", speak_fn: Optional[Callable] = None,
         return None
 
     if not _active_engines(lang):
+        if not current_policy().allow_persistence:
+            clear_private_recordings()
         language = _stt_language_code(lang)
         _set_error(
             f"Speech recognition for {language} is not installed, "
-            "but your recording has been saved."
+            + ("and the private recording was removed." if not current_policy().allow_persistence
+               else "but your recording has been saved.")
         )
         return None
 
-    text = transcribe_file(path, lang)
+    try:
+        text = transcribe_file(path, lang)
+    finally:
+        if not current_policy().allow_persistence:
+            clear_private_recordings()
     if text:
-        logger.info(f"Final transcription: '{text}'")
+        logger.info("Transcription completed (%s characters).", len(text))
         _set_error(None)
         return text
 

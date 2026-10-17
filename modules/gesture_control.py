@@ -37,12 +37,8 @@ LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 logger = logging.getLogger("GestureModule")
 
-_settings = {}
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        _settings = json.load(f)
-except Exception:
-    pass
+from modules.config_loader import load_settings
+_settings = load_settings()
 
 GESTURE_CONFIDENCE          = float(_settings.get("gesture_confidence", 0.60))
 GESTURE_DISPLAY             = bool(_settings.get("gesture_display", False))

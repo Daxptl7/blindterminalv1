@@ -13,7 +13,7 @@ for ambiguous examples and allow multiple valid reference translations.
 Each JSONL row for `scripts/benchmark_translation.py` has this form:
 
 ```json
-{"id":"en-hi-0001","src":"en","dest":"hi","source":"The dose is 25 mg.","references":["खुराक 25 मिलीग्राम है।"],"human_adequate":true}
+{"id":"en-hi-0001","src":"en","dest":"hi","source":"The dose is 25 mg.","references":["खुराक 25 मिलीग्राम है।"]}
 ```
 
 Run locally/private by default:
@@ -21,6 +21,12 @@ Run locally/private by default:
 ```bash
 python scripts/benchmark_translation.py data/translation-eval.jsonl
 ```
+
+Use `--output generated-results.json` to save the actual model outputs and their
+`output_sha256` values. Native reviewers score those saved outputs. Add
+`human_adequate` (a JSON boolean) and `reviewed_output_sha256` to each manifest row
+only after review. A human score counts toward release only when its hash matches
+the exact generated output; an unbound score or an output change is unreviewed.
 
 Use `--allow-cloud` only for a non-confidential dataset when cloud comparison
 is intentional. The script reports reference chrF, deterministic safety

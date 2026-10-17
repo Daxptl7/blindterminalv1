@@ -18,6 +18,7 @@ import signal
 import logging
 import json
 import time
+from datetime import datetime, timezone
 
 from pathlib import Path
 from typing import Optional, Dict
@@ -47,12 +48,8 @@ logger = logging.getLogger("GPSModule")
 # SETTINGS
 # ──────────────────────────────────────────────────────────────
 def _load_settings() -> dict:
-    try:
-        with open(CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"Using defaults: {e}")
-        return {}
+    from modules.config_loader import load_settings
+    return load_settings()
 
 _settings = _load_settings()
 
@@ -70,6 +67,28 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org"
 OSRM_URL = "https://router.project-osrm.org"
 ALLOW_IP_GEOLOCATION = bool(_settings.get("allow_ip_geolocation", False))
 
+
+class NoGPSFix(RuntimeError):
+    """Location is unavailable; callers must never substitute test data."""
+
+
+def _valid_fix(msg):
+    if getattr(msg, "sentence_type", "") == "RMC" and getattr(msg, "status", "V") != "A":
+        return False
+    if getattr(msg, "sentence_type", "") == "GGA" and int(getattr(msg, "gps_qual", 0) or 0) <= 0:
+        return False
+    stamp = getattr(msg, "timestamp", None)
+    if stamp is None:
+        return False
+    now = datetime.now(timezone.utc)
+    fix = datetime.combine(getattr(msg, "datestamp", None) or now.date(), stamp, timezone.utc)
+    age = abs((now - fix).total_seconds())
+    # GGA carries a time but no date; account for the midnight boundary.
+    if not getattr(msg, "datestamp", None):
+        age = min(age, abs(age - 86400))
+    return (age <= float(_settings.get("gps_max_fix_age_seconds", 10))
+            and -90 <= msg.latitude <= 90 and -180 <= msg.longitude <= 180)
+
 # ──────────────────────────────────────────────────────────────
 # GPS READER
 # ──────────────────────────────────────────────────────────────
@@ -79,28 +98,25 @@ def _read_gps_hardware() -> Optional[Dict]:
         import serial
         import pynmea2
 
-        ser = serial.Serial(GPS_PORT, GPS_BAUD, timeout=5)
+        ser = serial.Serial(GPS_PORT, GPS_BAUD, timeout=1)
         logger.info(f"GPS serial opened on {GPS_PORT} @ {GPS_BAUD} baud")
 
         # Try to get a valid fix (timeout after 60 seconds)
-        start = time.time()
-        while time.time() - start < 60:
-            line = ser.readline().decode('ascii', errors='replace').strip()
-            if line.startswith('$GPRMC') or line.startswith('$GPGGA'):
-                try:
-                    msg = pynmea2.parse(line)
-                    if hasattr(msg, 'latitude') and hasattr(msg, 'longitude'):
-                        if msg.latitude != 0.0 and msg.longitude != 0.0:
-                            logger.info(f"GPS fix: {msg.latitude}, {msg.longitude}")
-                            ser.close()
-                            return {
-                                'lat': msg.latitude,
-                                'lon': msg.longitude
-                            }
-                except pynmea2.ParseError:
-                    continue
-
-        ser.close()
+        try:
+            deadline = time.monotonic() + float(_settings.get("gps_fix_timeout_seconds", 15))
+            while time.monotonic() < deadline:
+                line = ser.readline().decode('ascii', errors='replace').strip()
+                if line.startswith('$') and line[3:6] in ('RMC', 'GGA'):
+                    try:
+                        msg = pynmea2.parse(line, check=True)
+                        if _valid_fix(msg):
+                            return {'lat': msg.latitude, 'lon': msg.longitude,
+                                    'source': 'gps', 'simulated': False,
+                                    'fix_time': time.time()}
+                    except (pynmea2.ParseError, ValueError, TypeError, AttributeError):
+                        continue
+        finally:
+            ser.close()
         logger.warning("GPS timeout — no satellite fix obtained.")
         return None
 
@@ -323,15 +339,16 @@ def get_location() -> Dict:
         except Exception as e:
             logger.debug(f"Hardware auto-detection check skipped: {e}")
 
-    # 3. Fall back to IP geolocation to find real-time location (e.g. Navsari, Gujarat)
-    if not coords:
-        coords = _read_gps_ip()
-
-    # 4. Fall back to simulated/configured test coordinates
-    if not coords:
+    # Simulation must be explicit, and its provenance travels to the speaker.
+    if not coords and _settings.get("app_mode", "device") == "simulation":
         coords = _read_gps_simulation()
+        coords.update(source='simulation', simulated=True, fix_time=None)
+    if not coords:
+        raise NoGPSFix("No current GPS fix. Please move to an open area and try again.")
 
-    address = _reverse_geocode(coords['lat'], coords['lon'])
+    from modules.privacy_policy import current_policy
+    address = (_reverse_geocode(coords['lat'], coords['lon']) if current_policy().allow_cloud
+               else f"latitude {coords['lat']:.4f}, longitude {coords['lon']:.4f}")
     coords['address'] = address
 
     return coords
@@ -350,12 +367,19 @@ def get_directions(destination: str) -> str:
     Returns:
         Spoken navigation text.
     """
+    from modules.privacy_policy import current_policy
+    if not _settings.get("navigation_enabled", False):
+        return "Walking navigation has not been validated on this device and is disabled."
+    if not current_policy().allow_cloud:
+        return "Online route planning is unavailable in private mode."
     if not destination or not destination.strip():
         return "Please tell me where you want to go."
 
     # Get current position
     current = get_location()
-    logger.info(f"Navigation from {current['lat']},{current['lon']} to '{destination}'")
+    if current.get('source') != 'gps' or current.get('simulated'):
+        return "A current hardware GPS fix is required for route planning."
+    logger.info("Route summary requested.")
 
     # Geocode destination
     dest_coords = _forward_geocode(destination)

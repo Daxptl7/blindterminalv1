@@ -13,9 +13,12 @@ Missing buttons or an unanswered prompt cancel document playback.
 import logging
 import re
 import time
+import sys
+import select
 
 from modules.config_loader import load_settings
 from modules import tts
+from modules.privacy_policy import PRIVATE, current_policy, processing_session, session_active
 
 logger = logging.getLogger("ConfidentialMode")
 
@@ -44,6 +47,7 @@ except (TypeError, ValueError):
 
 def enable_earphone():
     """Routes audio strictly to the wired earphones (Private)."""
+    tts.require_private_output()
     tts.use_earphone_output()
     print(" 🔒 [PRIVATE MODE] Audio routed to wired earphones.")
 
@@ -70,28 +74,44 @@ class PrivateAudio:
 
     def __enter__(self):
         enable_earphone()
+        self._session = processing_session(PRIVATE)
+        self._session.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        self._session.__exit__(exc_type, exc_value, traceback)
         enable_speaker()
         return False
 
 
 def ask_confidentiality(morse_serial=None):
     """Button 1 selects earphones, Button 2 selects speaker; None cancels."""
+    if session_active():
+        return "PRIVATE" if current_policy().private else "NORMAL"
     # The choice prompt must be audible from the device speaker. It is spoken
     # before the user has selected a destination, so routing it through the
     # private output made the later speaker/earphone choice sound reversed.
     enable_speaker()
     if morse_serial is None:
-        tts.speak("Buttons are not connected. Playback cancelled.", "en", block=True)
+        if sys.stdin is not None and sys.stdin.isatty():
+            tts.speak("Type 1 for local private processing and earphones, or 2 for online processing and speaker.",
+                      "en", block=True)
+            deadline = time.monotonic() + PROMPT_TIMEOUT
+            while time.monotonic() < deadline:
+                if select.select([sys.stdin], [], [], .1)[0]:
+                    choice = sys.stdin.readline().strip()
+                    if choice in ("1", "2"):
+                        return "PRIVATE" if choice == "1" else "NORMAL"
+                    if not choice:
+                        break
+        tts.speak("No privacy option selected. Operation cancelled.", "en", block=True)
         return None
     try:
         # Clear old presses before the prompt, never after it. A press made
         # during speech stays queued for the selection loop.
         while morse_serial.get_message(timeout=0.05) is not None:
             pass
-        tts.speak("Press button 1 for private earphones. Press button 2 for speaker.",
+        tts.speak("Press button 1 for local private processing and earphones. Press button 2 for online processing and speaker.",
                   "en", block=True)
         deadline = time.monotonic() + PROMPT_TIMEOUT
         while True:

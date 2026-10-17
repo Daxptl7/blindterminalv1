@@ -27,6 +27,7 @@ import re
 import shutil
 import signal
 import subprocess
+from modules.privacy_policy import current_policy, processing_session, PRIVATE
 import sys
 import tempfile
 import threading
@@ -46,11 +47,8 @@ IS_MACOS = platform.system() == "Darwin"
 
 
 def _load_settings_static() -> dict:
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    from modules.config_loader import load_settings
+    return load_settings()
 
 
 _static_settings = _load_settings_static()
@@ -107,7 +105,10 @@ def _validate_device(configured: str, role: str, fallback_index: int,
     if configured in _AVAILABLE_OUTPUTS:
         return configured
 
-    candidates = [d for d in _AVAILABLE_OUTPUTS if d != avoid] or _AVAILABLE_OUTPUTS
+    if avoid is not None:
+        logger.error("Private output is unavailable; private playback disabled.")
+        return None
+    candidates = _AVAILABLE_OUTPUTS
     substitute = candidates[min(fallback_index, len(candidates) - 1)]
     logger.error(
         f"{role} device {configured!r} from settings.json does not exist on this "
@@ -138,6 +139,19 @@ if not _static_settings.get("earphone_device") and _static_settings.get("bone_de
 
 EARPHONE_DEVICE = _validate_device(_configured_earphone, "Earphone", 0,
                                    avoid=SPEAKER_DEVICE)
+
+
+class AudioRoutingError(RuntimeError):
+    pass
+
+
+def require_private_output(device=None):
+    selected = device or EARPHONE_DEVICE
+    available = _alsa_playback_devices()
+    if (IS_MACOS or SPEAKER_DEVICE not in available or not selected or selected == "default"
+            or selected == SPEAKER_DEVICE or selected not in available):
+        raise AudioRoutingError("A separate, verified private audio output is required.")
+    return selected
 
 # Kept so any caller still using the old name gets the same card.
 BONE_DEVICE = EARPHONE_DEVICE
@@ -411,7 +425,7 @@ class _Utterance:
     hang behind unrelated queued speech.
     """
 
-    __slots__ = ("text", "lang", "done", "device")
+    __slots__ = ("text", "lang", "done", "device", "policy", "error")
 
     def __init__(self, text, lang, device=None):
         self.text = text
@@ -423,6 +437,8 @@ class _Utterance:
         # the global selection.
         self.device = _current_device if device is None else device
         self.done = threading.Event()
+        self.policy = current_policy()
+        self.error = None
 
 
 def _pick_pyttsx3_voice(engine, lang: str):
@@ -453,7 +469,8 @@ def _pick_pyttsx3_voice(engine, lang: str):
 class TTSManager:
     def __init__(self):
         self.settings = self._load_settings()
-        self.queue = Queue()
+        self.queue = Queue(maxsize=32)
+        self._generation = 0
         self.running = True
         self._current_rate = self.settings.get("tts_rate", 150)
         self._speaking = threading.Event()
@@ -478,11 +495,8 @@ class TTSManager:
         logger.info("TTS Manager ready.")
 
     def _load_settings(self) -> dict:
-        try:
-            with open(CONFIG_PATH, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {"tts_rate": 150, "tts_volume": 1.0, "tts_engine": "gtts"}
+        from modules.config_loader import load_settings
+        return load_settings()
 
     # ── SYNTHESIS ────────────────────────────────────────────
     def _synthesize(self, text: str, lang: str):
@@ -491,7 +505,7 @@ class TTSManager:
 
         # gTTS produces MP3. Skip it for 30s after a failure so an offline
         # device doesn't pay a network timeout on every single line it speaks.
-        if engine_choice == "gtts" and (time.time() - self._gtts_failed_at) > 30:
+        if current_policy().allow_cloud and engine_choice == "gtts" and (time.time() - self._gtts_failed_at) > 30:
             try:
                 import io
                 from gtts import gTTS
@@ -502,7 +516,7 @@ class TTSManager:
                 tld = "co.in" if g_lang == "en" else "com"
 
                 fp = io.BytesIO()
-                gTTS(text=text, lang=g_lang, tld=tld).write_to_fp(fp)
+                gTTS(text=text, lang=g_lang, tld=tld, timeout=(3, 8)).write_to_fp(fp)
                 fp.seek(0)
                 data = fp.read()
                 if data:
@@ -728,7 +742,22 @@ class TTSManager:
         """Speak `text`, trying every backend. Never silently drops the message."""
         self._speaking.set()
         try:
+            generation = getattr(self, "_generation", 0)
+            private = current_policy().private or (
+                bool(device_override) and device_override == EARPHONE_DEVICE)
+            if private:
+                device = require_private_output(device_override)
+                # Private text must never be sent to a network synthesizer.
+                with processing_session(PRIVATE):
+                    data, fmt = self._synthesize(text, lang)
+                if generation != getattr(self, "_generation", 0):
+                    raise AudioRoutingError("Speech cancelled.")
+                if data and fmt and self._play_routed(data, fmt, device):
+                    return True
+                raise AudioRoutingError("Private playback failed; content was not sent to a public output.")
             data, fmt = self._synthesize(text, lang)
+            if generation != getattr(self, "_generation", 0):
+                raise AudioRoutingError("Speech cancelled.")
 
             if data and fmt:
                 # When a specific card has been selected (Confidential Mode),
@@ -784,8 +813,8 @@ class TTSManager:
 
             # Nothing could speak. Make the failure loud rather than silent —
             # a blind user must never be left guessing whether the device died.
-            logger.error(f"NO AUDIO BACKEND AVAILABLE — could not speak: {text[:80]!r}")
-            print(f"[TTS — NO AUDIO OUTPUT] {text}", flush=True)
+            logger.error("No audio backend available.")
+            raise AudioRoutingError("No audio output is available.")
         finally:
             self._speaking.clear()
 
@@ -802,11 +831,12 @@ class TTSManager:
                 break
 
             try:
-                logger.info(f'Speaking: "{item.text[:60]}"')
-                self._deliver(item.text, item.lang, item.device)
+                logger.info("Speaking utterance (%s characters).", len(item.text))
+                with processing_session(item.policy):
+                    self._deliver(item.text, item.lang, item.device)
             except Exception as e:
-                logger.error(f"TTS error: {e}")
-                print(f"[TTS FALLBACK] {item.text}", flush=True)
+                item.error = AudioRoutingError("Speech playback failed.")
+                logger.error("Speech playback failed (%s).", type(e).__name__)
             finally:
                 item.done.set()
                 self.queue.task_done()
@@ -817,8 +847,7 @@ class TTSManager:
         if not text or not str(text).strip():
             return
         if not self.running:
-            print(f"[TTS after shutdown] {text}", flush=True)
-            return
+            raise AudioRoutingError("Speech engine has shut down.")
 
         # Capture the selected output at enqueue time. This is important for
         # non-blocking speech: callers commonly queue a status message and
@@ -826,10 +855,17 @@ class TTSManager:
         # Without this snapshot, the worker can play that old message on the
         # newly selected route.
         queued_device = _current_device if device is None else device
+        if current_policy().private:
+            queued_device = require_private_output()
         item = _Utterance(str(text), lang, queued_device)
-        self.queue.put(item)
+        self.queue.put(item, timeout=1)
         if block:
-            item.done.wait(timeout=timeout)
+            if not item.done.wait(timeout=timeout):
+                self.stop()
+                raise TimeoutError("Speech playback timed out.")
+            if item.error:
+                raise item.error
+        return True
 
     def set_rate(self, rate: int):
         self._current_rate = max(80, min(300, int(rate)))
@@ -853,6 +889,7 @@ class TTSManager:
             except Empty:
                 break
             if item is not None:
+                item.error = AudioRoutingError("Speech cancelled.")
                 item.done.set()
                 dropped += 1
             self.queue.task_done()
@@ -861,6 +898,7 @@ class TTSManager:
 
     def stop(self):
         """Stop what is playing now and discard anything pending."""
+        self._generation = getattr(self, "_generation", 0) + 1
         self.flush()
         if PYGAME_AVAILABLE:
             try:
@@ -879,6 +917,7 @@ class TTSManager:
     def shutdown(self):
         if not self.running:
             return
+        self.stop()
         self.running = False
         self.queue.put(None)
         self.worker_thread.join(timeout=5)
@@ -910,7 +949,7 @@ def _get_manager() -> TTSManager:
 
 
 def speak(text: str, lang: str = "eng", block: bool = False):
-    _get_manager().speak(text, lang, block)
+    return _get_manager().speak(text, lang, block)
 
 
 def speak_on_device(text: str, device: str, lang: str = "eng",
@@ -932,7 +971,7 @@ def speak_on_device(text: str, device: str, lang: str = "eng",
     Defaults to block=True: every caller that routes speech has to know when
     the utterance finished (it is about to ask the user a question).
     """
-    _get_manager().speak(text, lang, block=block, timeout=timeout, device=device)
+    return _get_manager().speak(text, lang, block=block, timeout=timeout, device=device)
 
 def set_rate(rate: int):
     _get_manager().set_rate(rate)

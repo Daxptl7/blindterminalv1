@@ -70,7 +70,8 @@ class PrivacyButtonTests(unittest.TestCase):
 
 class ExplanationButtonTests(unittest.TestCase):
     def scope(self):
-        names = {'mode_ocr_scan', '_select_with_buttons', '_button_choice', '_drain_button_messages'}
+        names = {'mode_ocr_scan', '_select_with_buttons', '_button_choice', '_drain_button_messages',
+                 '_ask_ai_cancellable', '_process_cancellable'}
         nodes = [n for n in ast.parse(Path('main.py').read_text()).body
                  if isinstance(n, ast.FunctionDef) and n.name in names]
         import time
@@ -80,7 +81,8 @@ class ExplanationButtonTests(unittest.TestCase):
         ocr.scan_and_read.return_value = 'Document content'
         ai = mock.Mock()
         ai.ask_ai.return_value = 'Explanation'
-        scope = dict(time=time, logger=mock.Mock(), _modules={'ocr':ocr, 'ai_query':ai},
+        from modules.privacy_policy import current_policy
+        scope = dict(current_policy=current_policy, time=time, logger=mock.Mock(), _modules={'ocr':ocr, 'ai_query':ai},
                      _has=lambda name: name in ('ocr', 'ai_query'), _speak=mock.Mock(),
                      _flush_speech=mock.Mock(), _morse_serial_singleton=serial,
                      _button3_stop_signal=lambda: (None, mock.Mock()),

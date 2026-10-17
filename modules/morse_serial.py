@@ -56,12 +56,8 @@ LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 logger = logging.getLogger("MorseSerialModule")
 
-_settings = {}
-try:
-    with open(CONFIG_PATH, 'r') as f:
-        _settings = json.load(f)
-except Exception:
-    pass
+from modules.config_loader import load_settings
+_settings = load_settings()
 
 # Configured port wins over auto-detection; "" or absent means auto-detect.
 MORSE_PORT = str(_settings.get("morse_port", "") or "").strip()

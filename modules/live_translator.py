@@ -23,6 +23,7 @@ import signal
 import select
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import threading
 from pathlib import Path
 from typing import Optional, Callable
@@ -70,7 +71,7 @@ if not logger.handlers:
     sh.setFormatter(fmt)
     logger.addHandler(sh)
     try:
-        fh = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        fh = RotatingFileHandler(LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8")
         fh.setFormatter(fmt)
         logger.addHandler(fh)
     except Exception:
@@ -78,12 +79,8 @@ if not logger.handlers:
 
 
 def _load_settings() -> dict:
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"Could not load settings from {CONFIG_PATH}: {e}")
-        return {}
+    from modules.config_loader import load_settings
+    return load_settings()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -427,6 +424,9 @@ class LiveTranslator:
         Run the live interpreter.
         Blocks until the user exits (via stop_check, pressing Enter, or Ctrl+C).
         """
+        from modules.privacy_policy import current_policy
+        if not current_policy().allow_cloud:
+            raise RuntimeError("Live cloud interpretation is unavailable in private mode.")
         if not GENAI_AVAILABLE:
             print("Error: google-genai library is required.")
             return

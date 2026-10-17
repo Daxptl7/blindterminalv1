@@ -41,24 +41,17 @@ class FeedbackTests(unittest.TestCase):
             run_with_feedback(mock.Mock(side_effect=RuntimeError('offline')), mock.Mock())
 
     def test_max_updates_is_bounded(self):
-        # Control Event.wait while running the real worker to avoid timing races.
-        event = threading.Event()
-        operation = mock.Mock(return_value='done')
-        class WaitSequence:
-            def __init__(self):
-                self.waits = 0
-            def set(self):
-                event.set()
-            def wait(self, delay):
-                self.waits += 1
-                if self.waits < 6:
-                    return False
-                return event.wait(2)
+        finish = threading.Event()
+        timer = threading.Timer(.25, finish.set)
+        timer.start()
         speak = mock.Mock()
-        with mock.patch('modules.processing_feedback.threading.Event', return_value=WaitSequence()), \
-             mock.patch('modules.processing_feedback.threading.Thread') as thread:
-            thread.return_value.start.side_effect = lambda: thread.call_args.kwargs['target']()
-            self.assertEqual(run_with_feedback(operation, speak), 'done')
+        try:
+            result = run_with_feedback(lambda: finish.wait(1) and 'done', speak,
+                first_delay=.01, interval=.01, max_updates=2)
+        finally:
+            finish.set()
+            timer.join()
+        self.assertEqual(result, 'done')
         self.assertEqual(speak.call_count, 2)
 
 

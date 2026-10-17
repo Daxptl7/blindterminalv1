@@ -5,6 +5,7 @@ from google.genai import types
 from PIL import Image
 from typing import Optional
 from dotenv import load_dotenv
+from modules.privacy_policy import current_policy
 
 load_dotenv()
 logger = logging.getLogger("GeminiAgentService")
@@ -14,7 +15,7 @@ class GeminiAgent:
     Interfaces with Google Gemini API to provide contextual reasoning for RAG.
     Defaults to the latest configured Gemini Flash model.
     """
-    def __init__(self, api_key: Optional[str] = None, model_name: str = 'gemini-3.5-flash'):
+    def __init__(self, api_key: Optional[str] = None, model_name: str = 'gemini-2.5-flash'):
         # Fallback to env var if key not explicitly passed
         key = api_key or os.getenv("GEMINI_API_KEY")
         if not key or key.startswith("YOUR_"):
@@ -23,7 +24,7 @@ class GeminiAgent:
             return
 
         try:
-            self.client = genai.Client(api_key=key)
+            self.client = genai.Client(api_key=key, http_options={"timeout": 10000})
             self.model_name = model_name
             self.system_instruction = (
                 "You are BlindAssist, a supportive, clear, and concise AI assistant for visually impaired students. "
@@ -42,7 +43,7 @@ class GeminiAgent:
         of a textbook diagram, chart, or illustration.
         """
         #if gemini online model is present then it goes here 
-        if not self.client:
+        if not self.client or not current_policy().allow_cloud:
             return "Image description is unavailable (offline mode)."
         prompt = (
             "You are an expert textbook illustrator and educational assistant for visually impaired students. "
@@ -71,8 +72,10 @@ class GeminiAgent:
         if not query:
             return "No question received."
 
-        if not self.client:
-            return f"[Offline Mock Response] Based on context: '{context[:100]}...', here is the answer for '{query}'."
+        if not self.client or not current_policy().allow_cloud:
+            return "The textbook answer service is unavailable. No answer was generated."
+        if not context or not context.strip():
+            return "I could not find supporting information in the textbook."
 
         # Construct augmented prompt
         prompt = f"NCERT Document Context:\n{context}\n\nUser Question: {query}"
@@ -90,4 +93,4 @@ class GeminiAgent:
             return "I'm sorry, I couldn't generate a clear answer from the document."
         except Exception as e:
             logger.error(f"Gemini API Error during generation: {e}")
-            return f"Gemini service encountered an error: {e}"
+            return "The textbook answer service could not complete the request. Please try again."

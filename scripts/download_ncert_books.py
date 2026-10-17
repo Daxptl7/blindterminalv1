@@ -25,7 +25,7 @@ from typing import Iterable
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "textbooks" / "ncert"
+DEFAULT_OUTPUT_DIR = BASE_DIR / "runtime" / "textbooks" / "ncert"
 
 NCERT_BASE_URL = "https://ncert.nic.in"
 NCERT_TEXTBOOK_PAGE = f"{NCERT_BASE_URL}/textbook.php?ln=en"

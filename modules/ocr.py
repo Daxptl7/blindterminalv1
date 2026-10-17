@@ -107,20 +107,14 @@ def _load_config() -> dict:
         "ocr_tesseract_min_confidence": 45,
         "ocr_tesseract_psm_modes": "3,6,4,11",
         "gemini_api_key":   "",
-        "gemini_model_name": "gemini-3.5-flash-lite",
+        "gemini_model_name": "gemini-2.5-flash",
         "gemini_timeout_s": 8,
     }
     from modules.ocr_guidance import DEFAULTS
     defaults.update(DEFAULTS)
-    try:
-        if CONFIG_PATH.exists():
-            with open(CONFIG_PATH, "r") as f:
-                cfg = json.load(f)
-            for key in defaults:
-                if key in cfg:
-                    defaults[key] = cfg[key]
-    except Exception as e:
-        logger.warning(f"Config load warning: {e}")
+    from modules.config_loader import load_settings
+    cfg = load_settings()
+    defaults.update(cfg)
     return defaults
 
 
@@ -1011,6 +1005,14 @@ class TesseractOCREngine:
             low_confidence_ratio=low_ratio,
         )
 
+    @staticmethod
+    def _tesseract_data(pytesseract, image, **kwargs):
+        from modules.processing_feedback import check_processing
+        check_processing()
+        result = pytesseract.image_to_data(image, timeout=10, **kwargs)
+        check_processing()
+        return result
+
     def _best_candidate(self, pytesseract, pil_image: Image.Image, tess_lang: str) -> TesseractCandidate:
         best = TesseractCandidate("", 0.0, 0, "none", 6)
 
@@ -1027,7 +1029,7 @@ class TesseractOCREngine:
                     (max(1, int(probe.width * scale)), max(1, int(probe.height * scale))),
                     Image.Resampling.LANCZOS,
                 )
-            data = pytesseract.image_to_data(
+            data = self._tesseract_data(pytesseract,
                 probe,
                 lang=tess_lang,
                 config="--oem 1 --psm 11 --dpi 300",
@@ -1071,7 +1073,7 @@ class TesseractOCREngine:
                         "-c preserve_interword_spaces=1 "
                         "-c textord_heavy_nr=1"
                     )
-                    data = pytesseract.image_to_data(
+                    data = self._tesseract_data(pytesseract,
                         variant_image,
                         lang=tess_lang,
                         config=config,
@@ -1104,7 +1106,7 @@ class TesseractOCREngine:
                     "-c preserve_interword_spaces=1 "
                     "-c textord_heavy_nr=1"
                 )
-                data = pytesseract.image_to_data(
+                data = self._tesseract_data(pytesseract,
                     tile_image,
                     lang=tess_lang,
                     config=config,
@@ -1191,7 +1193,7 @@ class GeminiOCREngine:
                 if cls._instance is None:
                     obj = super().__new__(cls)
                     obj._client       = None
-                    obj._model_name   = _config.get("gemini_model_name", "gemini-3.5-flash-lite")
+                    obj._model_name   = _config.get("gemini_model_name", "gemini-2.5-flash")
                     obj._api_key      = _config.get("gemini_api_key", "")
                     obj._timeout_s    = _config.get("gemini_timeout_s", 8)
                     cls._instance     = obj
@@ -1215,6 +1217,9 @@ class GeminiOCREngine:
         Sends the image straight to Gemini and returns the text it reads.
         Raises on any failure — caller must catch and fall back.
         """
+        from modules.privacy_policy import current_policy
+        if not current_policy().allow_cloud:
+            raise PermissionError("Online OCR is disabled for this private session.")
         from google.genai import types  # local import, same reason as above
 
         client = self._get_client()
@@ -1303,6 +1308,23 @@ def open_camera() -> bool:
     return _camera.open()
 
 
+_inference_locks = {}
+_inference_lock_guard = threading.Lock()
+
+
+def _extract_serialized(engine, image, lang, stop_check):
+    from modules.processing_feedback import check_processing
+    with _inference_lock_guard:
+        lock = _inference_locks.setdefault(id(engine), threading.Lock())
+    while not lock.acquire(timeout=.05):
+        check_processing()
+    try:
+        check_processing()
+        return engine.extract_text(image, lang=lang)
+    finally:
+        lock.release()
+
+
 def scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
     from modules.processing_feedback import ProcessingCancelled
     try:
@@ -1359,7 +1381,7 @@ def _scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
                    if local else "Still waiting for the online reader. Please wait.")
         try:
             return run_with_feedback(
-                lambda: engine.extract_text(pil_image, lang=lang),
+                lambda: _extract_serialized(engine, pil_image, lang, stop_check),
                 speak_fn, stop_check, message=message)
         except ProcessingCancelled:
             raise
@@ -1390,7 +1412,9 @@ def _scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
 
     tess_text = ""
     tess_ok = False
-    gemini_first = bool(_config.get("ocr_gemini_first", True))
+    from modules.privacy_policy import current_policy
+    allow_cloud = current_policy().allow_cloud
+    gemini_first = allow_cloud and bool(_config.get("ocr_gemini_first", True))
 
     def _try_gemini() -> str:
         try:
@@ -1413,7 +1437,7 @@ def _scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
                     word_count,
                 )
             else:
-                logger.info(f"Gemini found no usable text: {gemini_text!r}")
+                logger.info("Online OCR returned no usable text.")
         except ProcessingCancelled:
             raise
         except Exception as e:
@@ -1444,7 +1468,7 @@ def _scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
     # ── HIGHEST-ACCURACY PATH: Gemini vision OCR first when configured ──
     # The Pi keeps working without internet/API access because every Gemini
     # failure falls back to the local Tesseract pipeline below.
-    if engine_name in ("auto", "gemini") and _config.get("gemini_api_key") and gemini_first:
+    if allow_cloud and engine_name in ("auto", "gemini") and _config.get("gemini_api_key") and gemini_first:
         gemini_text = _try_gemini()
         if gemini_text:
             return gemini_text
@@ -1458,7 +1482,7 @@ def _scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
             return tess_text
 
     # Optional cloud second look for users who prefer fast local-first scans.
-    if engine_name in ("auto", "gemini") and _config.get("gemini_api_key") and not gemini_first:
+    if allow_cloud and engine_name in ("auto", "gemini") and _config.get("gemini_api_key") and not gemini_first:
         announce("Checking the text with the online reader." if tess_ok else
                  "The local reader could not read the text. Trying the online reader.")
         gemini_text = _try_gemini()
@@ -1469,7 +1493,7 @@ def _scan_and_read(lang: str = "eng", speak_fn=None, stop_check=None) -> str:
         if tess_ok:
             return tess_text
         if _config.get("ocr_surya_fallback", False):
-            logger.warning(f"Tesseract OCR did not produce usable text, trying Surya: {tess_text}")
+            logger.warning("Local OCR returned no usable text; trying the optional reader.")
             announce("The first local reader could not read the text. Trying another local reader. Please wait.")
             return extract(_engine, local=True)
         return tess_text

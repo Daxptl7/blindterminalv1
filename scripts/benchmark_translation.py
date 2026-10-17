@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import statistics
 import sys
 import time
@@ -93,7 +94,13 @@ def run(rows: list[dict], allow_cloud: bool, min_chrf: float) -> list[dict]:
             "chrf": round(score, 4),
             "validation_passed": validation_passed,
             "automatic_pass": automatic_pass,
-            "human_adequate": row.get("human_adequate"),
+            "output": result.text,
+            "output_sha256": hashlib.sha256(result.text.encode("utf-8")).hexdigest(),
+            "model": result.model,
+            "human_adequate": (row.get("human_adequate")
+                if type(row.get("human_adequate")) is bool and
+                row.get("reviewed_output_sha256") == hashlib.sha256(result.text.encode("utf-8")).hexdigest()
+                else None),
             "error": result.error,
         }
         results.append(record)
@@ -142,11 +149,14 @@ def main() -> int:
                         help="allow sending evaluation sentences to cloud providers")
     parser.add_argument("--min-chrf", type=float, default=0.50)
     parser.add_argument("--release-minimum", type=int, default=500)
+    parser.add_argument("--output", type=Path, help="save generated outputs for independent review")
     args = parser.parse_args()
     rows = load_manifest(args.manifest)
     if not rows:
         raise SystemExit("manifest contains no test cases")
     results = run(rows, args.allow_cloud, args.min_chrf)
+    if args.output:
+        args.output.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0 if summarize(results, args.release_minimum) else 2
 
 

@@ -1,6 +1,8 @@
 import os
 import logging
 import threading
+import hashlib
+from modules.privacy_policy import current_policy
 from collections import OrderedDict
 from typing import List, Optional
 import numpy as np
@@ -66,7 +68,7 @@ class Embedder:
                     from google import genai
                     from google.genai import types
                     # Initialize the Google GenAI SDK client for cloud embeddings
-                    self.gemini_client = genai.Client(api_key=key)
+                    self.gemini_client = genai.Client(api_key=key, http_options={"timeout": 8000})
                     self.use_gemini = True
                     # Pre-cache the embedding config object (avoids re-import and re-creation per call)
                     self._gemini_config = types.EmbedContentConfig(
@@ -109,7 +111,7 @@ class Embedder:
                 try:
                     from sentence_transformers import SentenceTransformer
                     logger.info(f"Initializing local embedding model: {self.model_name}...")
-                    self.local_model = SentenceTransformer(self.model_name)
+                    self.local_model = SentenceTransformer(self.model_name, local_files_only=True)
                     logger.info("Local embedding model loaded successfully.")
                 except Exception as e:
                     logger.error(f"Failed to load local embedding model: {e}")
@@ -143,25 +145,28 @@ class Embedder:
         cache holds a strong reference), and shares one 512-entry budget across
         all instances.
         """
+        key = (self.index_identity, text)
         with self._cache_lock:
-            hit = self._cache.get(text)
+            hit = self._cache.get(key)
             if hit is not None:
                 self._cache_hits += 1
-                self._cache.move_to_end(text)
+                self._cache.move_to_end(key)
                 return hit
 
         self._cache_misses += 1
         vec = self._compute_embedding(text)
         # Convert to tuple for cheap, immutable storage (numpy arrays are unhashable)
         result = tuple(vec.tolist()) if vec.size > 0 else ()
-        self._cache_put(text, result)
+        if result:
+            self._cache_put(text, result)
         return result
 
     def _cache_put(self, text: str, value: tuple):
         """Insert into the bounded LRU cache, evicting the oldest entry if full."""
         with self._cache_lock:
-            self._cache[text] = value
-            self._cache.move_to_end(text)
+            key = (self.index_identity, text)
+            self._cache[key] = value
+            self._cache.move_to_end(key)
             while len(self._cache) > self._cache_size:
                 self._cache.popitem(last=False)
 
@@ -171,6 +176,8 @@ class Embedder:
         """
         # Try Cloud API (Gemini) if configured
         if self.use_gemini and self.gemini_client:
+            if not current_policy().allow_cloud:
+                return _EMPTY_VEC
             try:
                 result = self.gemini_client.models.embed_content(
                     model=self.gemini_embedding_model,
@@ -179,7 +186,10 @@ class Embedder:
                 )
                 return self._extract_gemini_embedding(result)
             except Exception as e:
-                logger.error(f"Gemini embedding error, falling back to local: {e}")
+                logger.warning("Cloud embedding unavailable; keeping the existing embedding space.")
+                return _EMPTY_VEC
+        if self.use_gemini:
+            return _EMPTY_VEC
 
         # Local offline fallback execution
         self._init_local_model()
@@ -220,9 +230,9 @@ class Embedder:
             return _EMPTY_VEC
 
         # Filter out empty/whitespace-only strings
-        clean_texts = [t.strip() for t in texts if t and t.strip()]
-        if not clean_texts:
-            return _EMPTY_VEC
+        if any(not isinstance(t, str) or not t.strip() for t in texts):
+            raise ValueError("Embedding input cannot contain empty chunks.")
+        clean_texts = [t.strip() for t in texts]
 
         # Optimization: Use true batch encoding for local model (single neural network forward pass)
         if not self.use_gemini:
@@ -231,6 +241,9 @@ class Embedder:
                 try:
                     batch_result = self.local_model.encode(clean_texts, show_progress_bar=False)
                     matrix = np.array(batch_result, dtype=np.float32)
+                    if (matrix.ndim != 2 or matrix.shape[0] != len(texts)
+                            or not np.isfinite(matrix).all()):
+                        raise ValueError("Incomplete or invalid embedding batch.")
                     # Populate the cache from the batch we just computed.
                     # The previous version called self._cached_embedding.__wrapped__(...),
                     # which bypasses the cache decorator entirely: it stored
@@ -244,10 +257,17 @@ class Embedder:
 
         # Fallback: per-text cached embedding (for Gemini API or if local batch fails)
         embeddings = [self.get_embedding(t) for t in clean_texts]
-        valid = [e for e in embeddings if e.size > 0]
-        if valid:
-            return np.vstack(valid)
-        return _EMPTY_VEC
+        if (any(e.size == 0 or not np.isfinite(e).all() for e in embeddings)
+                or len({e.shape for e in embeddings}) != 1):
+            raise ValueError("Embedding batch failed; no chunk may be paired with another chunk's vector.")
+        return np.vstack(embeddings)
+
+    @property
+    def index_identity(self):
+        cloud = getattr(self, "use_gemini", False)
+        model = getattr(self, "gemini_embedding_model", "gemini") if cloud else getattr(self, "model_name", "all-MiniLM-L6-v2")
+        identity = f"{'gemini' if cloud else 'local'}:{model}:{getattr(self, 'dimension', 384)}"
+        return hashlib.sha256(identity.encode()).hexdigest()[:24]
 
     def clear_cache(self):
         """

@@ -33,11 +33,8 @@ DEFAULT_SETTINGS = {
 }
 
 def _load_settings():
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f)
-    except Exception:
-        return DEFAULT_SETTINGS.copy()
+    from modules.config_loader import load_settings
+    return load_settings()
 
 _settings = _load_settings()
 DOT_MAX_MS = _settings.get("morse_dot_max_ms", 400)

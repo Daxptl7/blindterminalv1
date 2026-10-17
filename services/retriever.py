@@ -5,6 +5,7 @@ import numpy as np
 from dotenv import load_dotenv
 from .embedder import Embedder
 from .vector_store import VectorStore
+from modules.privacy_policy import current_policy
 
 load_dotenv()
 logger = logging.getLogger("RetrieverService")
@@ -17,7 +18,7 @@ class Retriever:
     def __init__(self, embedder: Embedder, vector_store: VectorStore, cohere_api_key: Optional[str] = None):
         self.embedder = embedder
         self.vector_store = vector_store
-        self.cohere_key = cohere_api_key or os.getenv("COHERE_API_KEY")
+        self.cohere_key = cohere_api_key if cohere_api_key is not None else os.getenv("COHERE_API_KEY")
         self.cohere_client = None
 
         if self.cohere_key and not self.cohere_key.startswith("YOUR_"):
@@ -38,8 +39,6 @@ class Retriever:
         try:
             # 1. Embed query
             query_vec = self.embedder.get_embedding(query)
-            if query_vec.size == 0:
-                return ""
 
             # 2. Retrieve candidate chunks (fetch top 10 for reranking)
             fetch_k = max(k * 3, 10)
@@ -49,8 +48,20 @@ class Retriever:
 
             candidate_chunks = [text for _, _, text in results]
 
+            def with_sources(chunks):
+                rendered = []
+                for text in chunks:
+                    try:
+                        index = self.vector_store.metadata.index(text)
+                        tag = self.vector_store.metadata_tags[index]
+                    except (ValueError, AttributeError, IndexError):
+                        tag = {}
+                    source = tag.get("chapter") or str(tag.get("document_id", "textbook"))[:12]
+                    rendered.append(f"Source: {source}.\n{text}")
+                return "\n---\n".join(rendered)
+
             # 3. Apply Cohere Rerank v3 if available
-            if self.cohere_client and len(candidate_chunks) > 1:
+            if current_policy().allow_cloud and self.cohere_client and len(candidate_chunks) > 1:
                 try:
                     rerank_res = self.cohere_client.rerank(
                         model="rerank-v3.5",
@@ -60,13 +71,13 @@ class Retriever:
                     )
                     top_chunks = [candidate_chunks[result.index] for result in rerank_res.results]
                     logger.info(f"Successfully reranked {len(candidate_chunks)} candidates down to top {len(top_chunks)} using Cohere.")
-                    return "\n---\n".join(top_chunks)
+                    return with_sources(top_chunks)
                 except Exception as e:
                     logger.warning(f"Cohere rerank API error, using vector scores: {e}")
 
             # Fallback: return top-k by vector similarity
             top_chunks = candidate_chunks[:k]
-            return "\n---\n".join(top_chunks)
+            return with_sources(top_chunks)
 
         except Exception as e:
             logger.error(f"Error retrieving context: {e}")

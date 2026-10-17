@@ -103,13 +103,15 @@ def evaluate(manifest_path, engine_name):
         actual_numbers = re.findall(r"\d+(?:[.,]\d+)*", actual)
         errors = edit_distance(expected, actual)
         words_matched = matched_count(expected_words, actual_words)
-        numbers_matched = matched_count(expected_numbers, actual_numbers)
+        # Counts alone accept swapped quantities (25 mg / 50 mg). Require
+        # numbers to remain in their original sequence and penalize insertions.
+        numbers_matched = sum(left == right for left, right in zip(expected_numbers, actual_numbers))
 
         totals["characters"] += len(expected)
         totals["character_errors"] += errors
         totals["words"] += len(expected_words)
         totals["matched_words"] += words_matched
-        totals["numbers"] += len(expected_numbers)
+        totals["numbers"] += max(len(expected_numbers), len(actual_numbers))
         totals["matched_numbers"] += numbers_matched
         latencies.append(latency)
 
@@ -126,6 +128,8 @@ def evaluate(manifest_path, engine_name):
     p95_index = max(0, int(len(sorted_latencies) * 0.95 + 0.9999) - 1)
     summary = {
         "pages": len(pages),
+        "languages": sorted({entry.get("lang", "eng") for entry in pages}),
+        "numeric_examples": totals["numbers"],
         "character_error_rate": totals["character_errors"] / max(totals["characters"], 1),
         "word_recall": totals["matched_words"] / max(totals["words"], 1),
         "numeric_accuracy": (
@@ -153,9 +157,14 @@ def main():
     parser.add_argument("--max-cer", type=float, default=0.05)
     parser.add_argument("--min-word-recall", type=float, default=0.95)
     parser.add_argument("--min-numeric-accuracy", type=float, default=0.99)
+    parser.add_argument("--min-pages", type=int, default=50)
+    parser.add_argument("--required-languages", default="eng,hin,guj")
+    parser.add_argument("--output", type=Path, help="save the exact measured result")
     args = parser.parse_args()
 
     summary = evaluate(args.manifest, args.engine)
+    if args.output:
+        args.output.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     numeric = summary["numeric_accuracy"]
     print("\nAggregate result")
     print(f"Pages: {summary['pages']}")
@@ -166,9 +175,12 @@ def main():
     print(f"p95 latency: {summary['p95_latency_seconds']:.2f}s")
 
     passed = (
-        summary["character_error_rate"] <= args.max_cer
+        summary["pages"] >= args.min_pages
+        and set(filter(None, args.required_languages.split(','))).issubset(summary["languages"])
+        and summary["numeric_examples"] > 0
+        and summary["character_error_rate"] <= args.max_cer
         and summary["word_recall"] >= args.min_word_recall
-        and (numeric is None or numeric >= args.min_numeric_accuracy)
+        and numeric is not None and numeric >= args.min_numeric_accuracy
     )
     print("Release gate: " + ("PASS" if passed else "FAIL"))
     return 0 if passed else 1

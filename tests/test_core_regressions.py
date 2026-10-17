@@ -102,18 +102,18 @@ class CoreRegressionTests(unittest.TestCase):
             self.assertEqual(store.metadata, [])
             self.assertFalse((path / "metadata.json").exists())
 
-    def test_vector_store_dimension_change_drops_incompatible_vectors(self):
+    def test_vector_store_rejects_dimension_change_without_losing_documents(self):
         import numpy as np
         from services.vector_store import VectorStore
-
         with tempfile.TemporaryDirectory() as tmp:
             store = VectorStore(store_path=tmp, dimension=3)
             store.add_text("old local embedding", np.array([1.0, 0.0, 0.0]))
-            store.add_text("new gemini embedding", np.array([1.0, 0.0, 0.0, 0.0]))
-
-            self.assertEqual(store.dimension, 4)
-            self.assertEqual(store.metadata, ["new gemini embedding"])
-            self.assertEqual(store.retrieve(np.array([1.0, 0.0, 0.0])), [])
+            with self.assertRaises(ValueError):
+                store.add_text("incompatible embedding", np.array([1.0, 0.0, 0.0, 0.0]))
+            restored = VectorStore(store_path=tmp, dimension=3)
+            self.assertEqual(restored.metadata, ["old local embedding"])
+            self.assertEqual(restored.dimension, 3)
+            self.assertEqual(restored.retrieve(np.array([1.0, 0.0, 0.0]))[0][2], "old local embedding")
 
     def test_rag_index_file_rejects_binary_suffix(self):
         from services.rag_pipeline import RAGPipeline
@@ -370,12 +370,9 @@ class RepairedDefectTests(unittest.TestCase):
              mock.patch.object(manager, "_play_system", return_value=False), \
              mock.patch.object(manager, "_play_pyttsx3_direct", return_value=False), \
              mock.patch("builtins.print") as printed:
-            manager._deliver("important message", "eng")
-
-        self.assertTrue(
-            any("important message" in str(c) for c in printed.call_args_list),
-            "text must still reach the user when every audio backend fails",
-        )
+            with self.assertRaises(tts.AudioRoutingError):
+                manager._deliver("important message", "eng")
+        printed.assert_not_called()
 
     def test_tts_module_exposes_shutdown_used_by_main(self):
         """main.py called _modules['tts'].tts_manager.shutdown(); that
@@ -693,7 +690,7 @@ class RepairedDefectTests(unittest.TestCase):
             "en-IN", prompt="Voice mode. Ask your question now."
         )
         morse.assert_not_called()
-        ai_query.ask_ai_and_speak.assert_called_once()
+        ai_query.ask_ai.assert_called_once()
 
     def test_translate_type_button_does_not_enter_morse_input(self):
         main = importlib.import_module("main")
@@ -747,11 +744,15 @@ class RepairedDefectTests(unittest.TestCase):
         cancel_stop.assert_called_once_with()
 
     # ── ai_query: timeouts that did not time out ─────────────────────────
-    def test_ask_ai_does_not_create_a_pool_per_call(self):
+    def test_successful_primary_does_not_contact_secondary_providers(self):
         from modules import ai_query
-
-        self.assertIsInstance(ai_query._EXECUTOR,
-                              __import__("concurrent.futures", fromlist=["x"]).ThreadPoolExecutor)
+        with mock.patch.object(ai_query, "get_rag_pipeline", return_value=None), \
+             mock.patch.object(ai_query, "_ask_groq", return_value="answer"), \
+             mock.patch.object(ai_query, "_ask_openai") as secondary, \
+             mock.patch.object(ai_query, "_ask_gemini") as final:
+            self.assertEqual(ai_query.ask_ai("question"), "answer")
+        secondary.assert_not_called()
+        final.assert_not_called()
 
     def test_offline_fallback_returns_fast_when_unconfigured(self):
         from modules import ai_query

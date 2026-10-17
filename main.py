@@ -6,9 +6,11 @@ Production-ready orchestrator with graceful degradation.
 import sys
 import signal
 import logging
+from logging.handlers import RotatingFileHandler
 import json
 import threading
 import time
+from modules.privacy_policy import PRIVATE, PUBLIC, current_policy, processing_session
 
 from pathlib import Path
 
@@ -35,17 +37,16 @@ try:
                 token = config_data.get("logfire_token")
         except Exception:
             pass
-    if token:
+    if token and config_data.get("telemetry_enabled", False):
         os.environ["LOGFIRE_TOKEN"] = token
-
-    import logfire
-    logfire.configure(send_to_logfire='if-token-present')
-    logfire_handler = logfire.LogfireLoggingHandler()
+        import logfire
+        logfire.configure(send_to_logfire='if-token-present')
+        logfire_handler = logfire.LogfireLoggingHandler()
 except Exception as e:
     pass
 
 logging_handlers = [
-    logging.FileHandler(LOG_PATH),
+    RotatingFileHandler(LOG_PATH, maxBytes=2_000_000, backupCount=3),
     logging.StreamHandler(sys.stdout)
 ]
 if logfire_handler:
@@ -61,18 +62,13 @@ _shutdown_done = False
 
 
 def _load_settings() -> dict:
-    """Orchestrator-level settings. Modules load their own; this is only for
-    behaviour main.py itself controls (mode time limits, etc.)."""
-    try:
-        with open(CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.warning(f"Could not read settings.json ({e}); using defaults.")
-        return {}
+    from modules.config_loader import load_settings
+    return load_settings()
 
 
 _settings = _load_settings()
 
+from modules.privacy_policy import PrivateLogFilter
 # ── SAFE IMPORTS ────────────────────────────────────────────
 # Each module is optional — app starts even if some are missing
 
@@ -131,6 +127,13 @@ if _morse_serial_singleton is not None and _modules.get("voice") is not None:
     except Exception as e:
         logger.warning(f"Could not share the button connection with voice.py: {e}")
 
+for configured_logger in [logging.getLogger(), *[
+        value for value in logging.Logger.manager.loggerDict.values()
+        if isinstance(value, logging.Logger)]]:
+    for configured_handler in configured_logger.handlers:
+        if not any(isinstance(item, PrivateLogFilter) for item in configured_handler.filters):
+            configured_handler.addFilter(PrivateLogFilter())
+
 # Helper to check if module is available
 def _has(mod_name):
     return _modules.get(mod_name) is not None
@@ -144,9 +147,10 @@ def _speak(text, block=False, lang="eng"):
     silence or nonsense.
     """
     if _has("tts"):
-        _modules["tts"].speak(text, lang=lang, block=block)
+        return _modules["tts"].speak(text, lang=lang, block=block or current_policy().private)
     else:
-        print(f"[TTS OFFLINE] {text}")
+        if not current_policy().private:
+            print(f"[TTS OFFLINE] {text}")
 
 
 def _flush_speech():
@@ -156,6 +160,27 @@ def _flush_speech():
             _modules["tts"].flush()
         except Exception as e:
             logger.debug(f"TTS flush failed: {e}")
+
+
+def _process_cancellable(operation, timeout=90):
+    from modules.processing_feedback import run_with_feedback, ProcessingCancelled
+    stop_check, cancel_watcher = _button3_stop_signal()
+    try:
+        return run_with_feedback(operation, _speak, stop_check, timeout=timeout)
+    except ProcessingCancelled:
+        _flush_speech()
+        _speak("Operation cancelled.", block=True)
+    except TimeoutError:
+        _flush_speech()
+        _speak("Processing timed out. Please try again.", block=True)
+    finally:
+        cancel_watcher()
+
+
+def _ask_ai_cancellable(prompt, **kwargs):
+    # Only the caller may speak. A cancelled provider cannot enqueue a late answer.
+    kwargs.update(speak_fn=None, flush_fn=None)
+    return _process_cancellable(lambda: _modules["ai_query"].ask_ai(prompt, **kwargs))
 
 
 def _listen(lang: str = "en-IN", announce: bool = False):
@@ -460,12 +485,13 @@ def mode_ocr_scan():
             )
             return
 
-        logger.info(f"OCR: {text[:200]}")
+        logger.info("OCR completed (%s characters).", len(text))
 
         # Index into RAG vector store for semantic retrieval
-        if _has("ai_query") and hasattr(_modules["ai_query"], "index_text_in_rag"):
-            _modules["ai_query"].index_text_in_rag(text)
-            logger.info("OCR text indexed into RAG vector store.")
+        if (current_policy().allow_persistence and document_mode != "PRIVATE"
+                and _has("ai_query") and hasattr(_modules["ai_query"], "index_text_in_rag")):
+            if _modules["ai_query"].index_text_in_rag(text):
+                logger.info("OCR text indexed into RAG vector store.")
 
         # The selector drains before speaking, preserves presses during the
         # prompt, and starts the full response window after speech completes.
@@ -476,13 +502,13 @@ def mode_ocr_scan():
         if response == "1":
             _speak("Analyzing...")
             if _has("ai_query"):
-                answer = _modules["ai_query"].ask_ai(
-                    "Explain this in simple terms for a visually impaired student:",
-                    context=text,
-                    speak_fn=_speak,
-                    flush_fn=_flush_speech,
-                )
-                _speak(answer)
+                from contextlib import nullcontext
+                # Inherit the document route even for direct mode callers.
+                with (_cm.PrivateAudio() if document_mode == "PRIVATE" else nullcontext()):
+                    answer = _ask_ai_cancellable(
+                        "Explain this in simple terms for a visually impaired student:",
+                        context=text, speak_fn=_speak, flush_fn=_flush_speech)
+                    _speak(answer)
             else:
                 _speak("AI module is not available.")
 
@@ -573,7 +599,7 @@ def mode_morse_type():
 
     _speak("Thinking...")
     if _has("ai_query"):
-        answer = _modules["ai_query"].ask_ai(
+        answer = _ask_ai_cancellable(
             question, speak_fn=_speak, flush_fn=_flush_speech
         )
         _speak(answer)
@@ -595,7 +621,7 @@ def mode_voice_ask():
         return
 
     _speak(f"You asked: {question}")
-    logger.info(f"Voice: {question}")
+    logger.info("Voice question captured (%s characters).", len(question))
 
     # Emotion check (passive)
     if _has("emotion"):
@@ -611,9 +637,9 @@ def mode_voice_ask():
         # itself, so there must be no _speak(answer) here: that would play
         # the whole answer a second time, on the wrong device, immediately
         # after the user has just chosen where to hear it.
-        _modules["ai_query"].ask_ai_and_speak(
-            question, speak_fn=_speak, flush_fn=_flush_speech
-        )
+        answer = _ask_ai_cancellable(question)
+        if answer:
+            _speak(answer, block=True)
     else:
         _speak("AI module is not available.")
 
@@ -1023,17 +1049,15 @@ def mode_translate():
     _speak(f"Translating. {label}.")
     translator = _modules["translator"]
     try:
-        result = translator.translate_ex(
-            text,
-            from_lang=src,
-            to_lang=dest,
-            privacy=private_translation,
-        )
+        result = _process_cancellable(lambda: translator.translate_ex(
+            text, from_lang=src, to_lang=dest, privacy=private_translation))
     except Exception as e:
         logger.error(f"Translation error: {e}")
         _speak("Translation failed. Please try again.")
         return
 
+    if result is None:
+        return
     if not result.text:
         _speak("Translation returned an empty result.")
         return
@@ -1305,12 +1329,8 @@ def mode_gesture():
             action = active_action
             active_action = None
             _speak(f"Starting {_GESTURE_ACTIONS[action]}.")
-            {
-                "MODE_SCAN": mode_ocr_scan,
-                "MODE_VOICE": mode_voice_ask,
-                "OBJECT_DETECT": mode_object_detection,
-                "GPS_CHECK": mode_gps,
-            }[action]()
+            run_mode({"MODE_SCAN": "1", "MODE_VOICE": "3",
+                      "OBJECT_DETECT": "6", "GPS_CHECK": "7"}[action])
             _speak("Back in gesture mode.")
         else:
             running = False
@@ -1390,7 +1410,8 @@ def mode_object_detection():
             else:
                 time.sleep(0.5)
 
-    threading.Thread(target=_watch_for_stop, daemon=True).start()
+    stop_watcher = threading.Thread(target=_watch_for_stop, daemon=True)
+    stop_watcher.start()
 
     def detection_callback(text, detections):
         nonlocal last_speak_time, last_spoken_text
@@ -1425,196 +1446,37 @@ def mode_object_detection():
             _speak("Object detection stopped because of an error.")
     finally:
         stop_detection.set()
+        stop_watcher.join(timeout=1)
         _speak("Object detection stopped.")
 
 def mode_gps():
-    """Mode 7: GPS Navigation with 4-way input (Voice, Gesture, Morse/Button, Keyboard)"""
-    logger.info("Mode 7: GPS")
+    """Location and explicitly enabled route summaries; no concurrent mic owners."""
     if not _has("gps"):
-        _speak("GPS navigation is not available.")
+        _speak("GPS is unavailable.")
         return
+    choice = _select_with_buttons(("1", "2"),
+        "Press button 1 for your location, or button 2 for a route summary.")
+    try:
+        if choice == "1":
+            location = _modules["gps"].get_location()
+            prefix = "Simulation location. " if location.get("simulated") else "GPS location. "
+            _speak(prefix + location['address'], block=True)
+        elif choice == "2":
+            if not _settings.get("navigation_enabled", False):
+                _speak("Walking navigation is not validated and is disabled.", block=True)
+                return
+            destination = _listen_until_stopped("en-IN", prompt="Speak the destination.")
+            if not destination:
+                _speak_voice_failure()
+                return
+            confirmation = _select_with_buttons(("1", "2"),
+                f"Route summary for {destination}. Press button 1 to confirm, or button 2 to cancel.")
+            if confirmation == "1":
+                _speak(_modules["gps"].get_directions(destination), block=True)
+    except Exception:
+        logger.warning("GPS request could not finish.")
+        _speak("No current GPS location is available. Move to an open area and try again.", block=True)
 
-    import time
-    import select
-    import sys
-    import threading
-
-    # Go through the safe-import registry rather than importing the modules
-    # directly: a missing optional dependency (mediapipe, PyAudio) must not
-    # take down GPS mode, which works fine on buttons and keyboard alone.
-    voice = _modules.get("voice")
-    gesture = _modules.get("gesture")
-
-    def _watch_gesture_in_background():
-        """Run one gesture-detection pass on a thread; report the first
-        recognised menu gesture. Returns a dict the caller polls cheaply."""
-        result = {"value": None}
-        if gesture is None:
-            return result
-
-        stop_event = threading.Event()
-
-        def _on_gesture(name):
-            if name == "MODE_SCAN":          # Open palm  -> Option 1
-                result["value"] = "1"
-            elif name in ("MODE_VOICE", "GPS_CHECK"):   # V-sign / 3 fingers -> Option 2
-                result["value"] = "2"
-            else:
-                return True                  # keep looking
-            stop_event.set()
-            return False                     # stop the detection loop
-
-        def _worker():
-            try:
-                gesture.detect_gesture(callback_fn=_on_gesture, stop_event=stop_event)
-            except Exception as e:
-                logger.warning(f"Gesture detection unavailable in GPS mode: {e}")
-
-        threading.Thread(target=_worker, daemon=True).start()
-        result["stop"] = stop_event
-        return result
-
-    def _listen_in_background(lang="en-IN"):
-        """
-        voice.listen() blocks for up to ~18s (VAD timeout + phrase capture +
-        Google API round-trip), so it must never be called inside a fast
-        polling loop. Runs it on a daemon thread and hands back a small
-        result dict the caller can poll cheaply.
-        """
-        result = {"text": None, "done": False}
-        if voice is None:
-            result["done"] = True
-            return result
-
-        def _worker():
-            try:
-                # _listen() drains the speech queue first, so this thread does
-                # not open the microphone while the menu prompt is still
-                # playing out of the speaker.
-                spoken = _listen(lang)
-                result["text"] = spoken.lower() if spoken else None
-            except Exception as e:
-                logger.warning(f"Voice read error in GPS mode: {e}")
-            finally:
-                result["done"] = True
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        return result
-
-    # 1. Speak the prompt out loud
-    _speak("GPS Mode. Press 1 for Where am I, or 2 to Navigate.")
-    print("\n1: Where am I?  2: Navigate to...")
-
-    choice = None
-    start_time = time.time()
-
-    # Voice starts once in the background — never re-called inside the loop
-    voice_result = _listen_in_background()
-    gesture_choice = _watch_gesture_in_background()
-
-    # 2. Listen for all 4 inputs simultaneously.
-    # The window has to outlast a full voice attempt (speech-queue drain +
-    # 6s to start speaking + 8s phrase + transcription), or the advertised
-    # "say 'where am I'" option can never win the race — the old 10s budget
-    # expired while the recogniser was still working. Buttons, keyboard and
-    # gestures still break out immediately, so this only affects a user who
-    # does nothing at all.
-    while time.time() - start_time < 25:
-
-        # A. Keyboard Input (Non-blocking).
-        # Guarded on isatty(): under systemd stdin is not a terminal and
-        # select() reports it readable immediately at EOF, which spun this
-        # loop at 100% CPU for its whole duration.
-        if _STDIN_IS_TTY and select.select([sys.stdin], [], [], 0.0)[0]:
-            line = sys.stdin.readline().strip()
-            if line in ('1', '2'):
-                choice = line
-                break
-
-        # B. Morse / Pico W Button Input
-        if _morse_serial_singleton is not None:
-            try:
-                btn = _morse_serial_singleton.wait_for_raw_button(timeout=0.1)
-                if btn in (1, 2):
-                    choice = str(btn)
-                    break
-            except Exception as e:
-                logger.warning(f"Morse/button read error in GPS mode: {e}")
-
-        # C. Voice Input — read the background thread's result, don't re-call it
-        if voice_result["done"] and voice_result["text"]:
-            v = voice_result["text"]
-            if "where" in v or "one" in v:
-                choice = '1'
-                break
-            elif "navigate" in v or "two" in v:
-                choice = '2'
-                break
-            voice_result["text"] = None  # consumed; thread already finished
-
-        # D. Gesture Input (Camera)
-        # FIX: this used to call gesture.get_current_gesture(), which has never
-        # existed in gesture_control.py. Every call raised AttributeError and
-        # was swallowed by `except AttributeError: pass`, so the gesture input
-        # advertised for this mode was silently dead. gesture_control exposes a
-        # callback-driven loop, so it is now run once on a background thread
-        # and this loop just polls the result.
-        if gesture_choice["value"]:
-            choice = gesture_choice["value"]
-            break
-
-        time.sleep(0.05)
-
-    # Always release the gesture camera before continuing, whether a gesture
-    # was used or not — otherwise the detection thread keeps the camera open
-    # for the rest of the session.
-    if gesture_choice.get("stop") is not None:
-        gesture_choice["stop"].set()
-
-    # 3. Execute the chosen option
-    if choice == '1':
-        _speak("Finding your live location...")
-        try:
-            loc = _modules["gps"].get_location()
-            _speak(f"You are near {loc['address']}")
-        except Exception as e:
-            logger.error(f"GPS location error: {e}")
-            _speak("I could not find your location right now.")
-
-    elif choice == '2':
-        _speak("Where do you want to navigate to? Please speak the destination, or type it.")
-
-        destination = None
-        dest_result = _listen_in_background()
-        dest_start = time.time()
-
-        # Poll keyboard non-blocking while the voice thread runs in the background,
-        # so typing doesn't have to wait for the mic to finish/timeout.
-        while time.time() - dest_start < 25:  # covers voice.listen()'s worst case
-            if _STDIN_IS_TTY and select.select([sys.stdin], [], [], 0.0)[0]:
-                typed = sys.stdin.readline().strip()
-                if typed:
-                    destination = typed
-                    break
-            if dest_result["done"]:
-                if dest_result["text"]:
-                    destination = dest_result["text"]
-                break
-            time.sleep(0.05)
-
-        if destination:
-            _speak(f"Calculating walking route to {destination}...")
-            try:
-                directions = _modules["gps"].get_directions(destination)
-                _speak(directions)
-            except Exception as e:
-                logger.error(f"GPS directions error: {e}")
-                _speak("I could not calculate directions right now.")
-        else:
-            _speak("I didn't hear a destination. Exiting GPS mode.")
-    else:
-        _speak("No valid input received. Returning to main menu.")
 
 def mode_confidential_demo():
     """Mode 8: Stand-alone demo/test of Confidential Mode"""
@@ -1704,7 +1566,7 @@ def mode_math_solver():
 
     _speak("This word problem is outside the verified local solver. I will try "
            "the A I tutor, but its answer is not automatically verified.")
-    answer = _modules["ai_query"].ask_ai(
+    answer = _ask_ai_cancellable(
         MATH_SOLVER_PROMPT + problem,
         # A non-empty, explicit context prevents unrelated textbook RAG
         # retrieval from being mixed into a standalone calculation.
@@ -1744,6 +1606,37 @@ MODE_MAP = {
     '9': mode_math_solver,
 }
 
+
+def run_mode(choice):
+    """Select processing privacy before opening a camera or microphone."""
+    from modules.privacy_policy import session_active
+    if choice not in MODE_MAP:
+        return
+    enabled = _settings.get("enabled_modes", ["1", "2", "3", "4", "5", "6", "8", "9"])
+    if choice not in enabled:
+        _speak("This feature is not enabled in this device profile.", block=True)
+        return
+    if choice in ("5", "6", "8") or session_active():
+        return MODE_MAP[choice]()
+    if not _has("privacy"):
+        _speak("Privacy selection is unavailable. Please check the installation.", block=True)
+        return
+    mode = _modules["privacy"].ask_confidentiality(_morse_serial_singleton)
+    if mode not in ("PRIVATE", "NORMAL"):
+        return
+    try:
+        with processing_session(PRIVATE if mode == "PRIVATE" else PUBLIC):
+            if mode == "PRIVATE":
+                with _modules["privacy"].PrivateAudio():
+                    return MODE_MAP[choice]()
+            return MODE_MAP[choice]()
+    except Exception as error:
+        logger.error("Mode failed (%s).", type(error).__name__)
+        _speak("The operation could not finish. Please check the device and try again.", block=True)
+    finally:
+        if _has("voice") and hasattr(_modules["voice"], "clear_private_recordings"):
+            _modules["voice"].clear_private_recordings()
+
 def _get_menu_choice():
     """
     FIX: reads a single hands-free Morse DIGIT from the Pico W when it's
@@ -1769,6 +1662,26 @@ def _has_any_input_device() -> bool:
     return _morse_serial_singleton is not None or _STDIN_IS_TTY
 
 def main():
+    from modules.config_loader import load_settings
+    try:
+        load_settings(strict=True)
+    except ValueError as error:
+        logger.error("Setup error: %s", error)
+        _speak("Device configuration is invalid. Please check the setup.", block=True)
+        shutdown()
+        return 1
+    if _settings.get("release_profile") == "device":
+        import subprocess
+        try:
+            result = subprocess.run([sys.executable, str(BASE_DIR / "selftest.py"),
+                                     "--profile", "device", "--vision"], timeout=90)
+            ready = result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            ready = False
+        if not ready:
+            _speak("The device did not pass its startup checks. Please check the installation.", block=True)
+            shutdown()
+            return 1
     logger.info("=" * 50)
     logger.info("BlindAssist Starting...")
     logger.info("=" * 50)
@@ -1789,7 +1702,7 @@ def main():
         logger.error(msg)
         _speak("No input device is connected. Please connect the buttons.")
         shutdown()
-        return
+        return 1
 
     running = True
     consecutive_empty = 0
@@ -1834,7 +1747,7 @@ def main():
 
             if choice in MODE_MAP:
                 try:
-                    MODE_MAP[choice]()
+                    run_mode(choice)
                 except Exception as e:
                     logger.error(f"Mode {choice} error: {e}")
                     _speak("An error occurred. Returning to menu.")
@@ -1845,6 +1758,7 @@ def main():
             running = False
 
     shutdown()
+    return 0
 
 def shutdown():
     global _shutdown_done
@@ -1853,6 +1767,8 @@ def shutdown():
     _shutdown_done = True
 
     logger.info("Shutting down...")
+    if _has("ai_query") and hasattr(_modules["ai_query"], "shutdown"):
+        _modules["ai_query"].shutdown()
     # FIX: this used to reference _modules["tts"].tts_manager, which does not
     # exist (the module's singleton is the private _tts_manager). The getattr
     # guard silently swallowed it, so the TTS worker and audio device were
@@ -1881,4 +1797,4 @@ def _handle_signal(sig, frame):
 if __name__ == '__main__':
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
-    main()
+    sys.exit(main())

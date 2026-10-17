@@ -34,6 +34,7 @@ import time
 import signal
 import socket
 import logging
+from logging.handlers import RotatingFileHandler
 import tempfile
 import threading
 import ipaddress
@@ -85,7 +86,7 @@ if not logger.handlers:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     try:
-        _fh = logging.FileHandler(LOG_PATH)
+        _fh = RotatingFileHandler(LOG_PATH, maxBytes=2_000_000, backupCount=3)
         _fh.setFormatter(logging.Formatter(
             "%(asctime)s [%(levelname)s] %(message)s"))
         logger.addHandler(_fh)
@@ -96,11 +97,8 @@ if not logger.handlers:
 # SETTINGS
 # ──────────────────────────────────────────────────────────────
 def _load_settings() -> dict:
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    from modules.config_loader import load_settings
+    return load_settings()
 
 
 _settings = _load_settings()
@@ -994,7 +992,8 @@ def translate_ex(text: str, from_lang: str = 'en', to_lang: str = 'hi',
     Never raises and never blocks longer than the chain allows: when the
     device is offline the network providers are skipped, not timed out.
     """
-    private = DEFAULT_PRIVACY if privacy is None else bool(privacy)
+    from modules.privacy_policy import current_policy
+    private = current_policy().private or (DEFAULT_PRIVACY if privacy is None else bool(privacy))
 
     if not text or not text.strip():
         return TranslationResult("No text to translate.", "en", False,

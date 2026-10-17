@@ -61,7 +61,9 @@ def check_config():
         return {}
     try:
         settings = json.loads(path.read_text())
-    except json.JSONDecodeError as e:
+        from modules.config_loader import validate_settings
+        validate_settings(settings)
+    except (json.JSONDecodeError, ValueError) as e:
         check("settings.json is valid JSON", False, str(e),
               "fix the syntax error; the device is running on defaults until you do")
         return {}
@@ -70,9 +72,62 @@ def check_config():
     keys = {k: settings.get(k) for k in
             ("groq_api_key", "openai_api_key", "gemini_api_key")}
     have = [k.replace("_api_key", "") for k, v in keys.items() if v]
-    check("At least one AI API key set", bool(have), ", ".join(have) or "none",
-          "add groq_api_key (free tier, fastest) to config/settings.json")
+    check("Cloud AI provider configured", bool(have), ", ".join(have) or "none",
+          "configure a provider for public AI, or provision a local model", required=False)
     return settings
+
+
+def check_device_profile(settings, probe_vision=False):
+    """Required checks for a customer device, separate from laptop diagnostics."""
+    section("Device release profile")
+    from modules import tts
+    check("Explicit device mode", settings.get("app_mode", "device") == "device",
+          "simulation cannot pass a device release gate")
+    try:
+        tts.require_private_output()
+        private_ok = True
+    except tts.AudioRoutingError:
+        private_ok = False
+    check("Verified separate private output", private_ok,
+          "requires two distinct, available ALSA routes")
+    check("Local speech and routed player", bool(shutil.which("espeak-ng") and shutil.which("aplay")),
+          "private speech must work without cloud synthesis")
+    enabled = set(settings.get("enabled_modes", list("12345689")))
+    if "1" in enabled:
+        check("Local OCR executable", bool(shutil.which("tesseract")))
+        if probe_vision:
+            try:
+                from modules import ocr
+                try:
+                    camera_ok = ocr.open_camera() and ocr._camera.capture() is not None
+                finally:
+                    ocr.release_camera()
+            except Exception:
+                camera_ok = False
+            check("Document camera captures a frame", camera_ok)
+        else:
+            check("Document camera validation requested", False,
+                  "use --profile device --vision for required camera checks")
+    if enabled.intersection({"2", "3"}):
+        model = Path(settings.get("offline_model_path") or "__missing_model__")
+        if not model.is_absolute():
+            model = BASE_DIR / model
+        check("Private local AI model provisioned", model.is_file())
+    if enabled.intersection({"3", "4", "9"}):
+        from modules import voice
+        for language in settings.get("supported_languages", ["en", "hi", "gu"]):
+            try:
+                model = voice._get_vosk_model(language)
+            except Exception:
+                model = None
+            check(f"Offline {language} recognition model loads", model is not None)
+    if "4" in enabled:
+        base = BASE_DIR / "models_local" / "indictrans2"
+        for name in ("en-indic", "indic-en", "indic-indic"):
+            check(f"Provisioned translation bundle {name}", (base / name / "config.json").is_file())
+    if "7" in enabled or settings.get("navigation_enabled", False):
+        check("Unvalidated walking navigation disabled", False,
+              "walking navigation must remain disabled for the initial release")
 
 
 # ── AUDIO OUT ───────────────────────────────────────────────
@@ -182,6 +237,7 @@ def check_voice(record_seconds=0):
 def check_hardware(settings, probe_vision=False):
     section("Hardware")
     on_pi = Path("/proc/device-tree/model").exists()
+    enabled = set(settings.get("enabled_modes", list("12345689")))
     pico = sorted(Path("/dev").glob("ttyACM*"))
     check("Pico W Morse buttons", bool(pico), str(pico[0]) if pico else "not connected",
           "plug in the Pico W; without it the menu needs a keyboard", required=False)
@@ -197,21 +253,21 @@ def check_hardware(settings, probe_vision=False):
     try:
         from modules import object_detection as od
         info = od.diagnostics(
-            probe_camera=probe_vision,
-            load_model=probe_vision,
+            probe_camera=probe_vision and "6" in enabled,
+            load_model=probe_vision and "6" in enabled,
         )
         resolved = info.get("model_path")
         exists = bool(info.get("model_ready"))
         check("YOLO model present", exists or None,
               str(resolved or "not installed"),
               "run: python3 scripts/prepare_object_detection.py",
-              required=on_pi)
+              required=on_pi and "6" in enabled)
         check("Object detection optimized for Pi",
               bool(resolved and ("ncnn" in str(resolved).lower())) or None,
               str(resolved or "no model"),
               "run the preparation script with --export-ncnn on the Pi",
               required=False)
-        if probe_vision:
+        if probe_vision and "6" in enabled:
             check("Object detection model loads", bool(info.get("model_ready")),
                   info.get("model_error") or str(resolved or "not installed"),
                   "reinstall the model and ultralytics")
@@ -219,29 +275,29 @@ def check_hardware(settings, probe_vision=False):
                   bool(info.get("camera_ready")),
                   info.get("camera_error") or info.get("camera_backend", "auto"),
                   "check the USB webcam or install/test rpicam-apps",
-                  required=on_pi)
+                  required=on_pi and "6" in enabled)
     except Exception as e:
-        check("Object detection module", None, str(e), required=False)
+        check("Object detection module", None, str(e), required=on_pi and "6" in enabled)
 
     try:
         from modules import gesture_control as gesture
         info = gesture.diagnostics(
-            probe_camera=probe_vision,
-            load_backend=probe_vision,
+            probe_camera=probe_vision and "5" in enabled,
+            load_backend=probe_vision and "5" in enabled,
         )
         check("MediaPipe for gesture control", bool(info["mediapipe_ready"]),
               "installed" if info["mediapipe_ready"] else "not installed",
-              "install the project requirements", required=on_pi)
+              "install the project requirements", required=on_pi and "5" in enabled)
         check("Gesture hand model/backend", bool(info["backend_ready"]),
               info.get("backend_error") or str(info.get("backend") or "unavailable"),
-              "run: python3 scripts/prepare_gesture_control.py", required=on_pi)
-        if probe_vision:
+              "run: python3 scripts/prepare_gesture_control.py", required=on_pi and "5" in enabled)
+        if probe_vision and "5" in enabled:
             check("Gesture camera returns frames", bool(info["camera_ready"]),
                   info.get("camera_error") or info.get("camera_backend", "auto"),
                   "grant camera permission or check USB/rpicam-apps",
-                  required=on_pi)
+                  required=on_pi and "5" in enabled)
     except Exception as e:
-        check("Gesture control module", None, str(e), required=False)
+        check("Gesture control module", None, str(e), required=on_pi and "5" in enabled)
 
 
 # ── LOCAL LANGUAGE TRANSLATION ─────────────────────────────
@@ -314,7 +370,7 @@ def check_math_solver():
 # ── SUMMARY ─────────────────────────────────────────────────
 def summarize(speak: bool):
     section("Summary")
-    failed = [r for r in _results if r["ok"] is False and r["required"]]
+    failed = [r for r in _results if r["ok"] is not True and r["required"]]
     degraded = [r for r in _results if r["ok"] is None or
                 (r["ok"] is False and not r["required"])]
 
@@ -353,6 +409,7 @@ def main():
                         help="record 3 seconds and report the level")
     parser.add_argument("--vision", action="store_true",
                         help="load vision models and capture camera frames")
+    parser.add_argument("--profile", choices=("development", "device"), default="development")
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
@@ -361,10 +418,16 @@ def main():
 
     settings = check_config()
     check_audio_output(settings)
-    check_voice(record_seconds=3 if args.mic else 0)
-    check_translation()
-    check_math_solver()
+    enabled = set(settings.get("enabled_modes", list("12345689")))
+    if enabled.intersection({"3", "4", "9"}):
+        check_voice(record_seconds=3 if args.mic else 0)
+    if "4" in enabled:
+        check_translation()
+    if "9" in enabled:
+        check_math_solver()
     check_hardware(settings, probe_vision=args.vision)
+    if args.profile == "device":
+        check_device_profile(settings, probe_vision=args.vision)
     return summarize(args.speak)
 
 

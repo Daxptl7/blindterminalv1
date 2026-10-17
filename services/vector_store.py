@@ -3,6 +3,12 @@ import re
 import json
 import numpy as np
 import logging
+import hashlib
+import tempfile
+import threading
+import fcntl
+from contextlib import contextmanager
+from modules.privacy_policy import current_policy
 from pathlib import Path
 from typing import List, Tuple, Optional
 from dotenv import load_dotenv
@@ -34,7 +40,7 @@ class VectorStore:
     3. BM25 Keyword Search (local sparse search)
     4. Reciprocal Rank Fusion (RRF) combining Dense + Sparse rankings.
     """
-    def __init__(self, store_path: str, dimension: int = 384):
+    def __init__(self, store_path: str, dimension: int = 384, model_id: str = None, use_cloud: bool = False):
         self.store_path = Path(store_path)
         self.store_path.mkdir(parents=True, exist_ok=True)
 
@@ -45,6 +51,10 @@ class VectorStore:
         self.vectors_file = self.store_path / "vectors.npy"
 
         self.dimension = dimension
+        self.model_id = model_id
+        self._lock = threading.RLock()
+        self.snapshot_file = self.store_path / "snapshot.json"
+        self.backup_file = self.store_path / "snapshot.previous.json"
         self.metadata = []
         self.metadata_tags = []
         self.vectors_list = []
@@ -54,7 +64,7 @@ class VectorStore:
         self.pinecone_index_name = os.getenv("PINECONE_INDEX", "ncert-books")
         self.pinecone_index = None
 
-        if self.pinecone_key and not self.pinecone_key.startswith("YOUR_"):
+        if use_cloud and current_policy().allow_cloud and self.pinecone_key and not self.pinecone_key.startswith("YOUR_"):
             try:
                 from pinecone import Pinecone
                 pc = Pinecone(api_key=self.pinecone_key)
@@ -82,76 +92,78 @@ class VectorStore:
             return
         self.add_batch([text], embedding.reshape(1, -1), tags=[tags] if tags else None)
 
-    def add_batch(self, texts: List[str], embeddings: np.ndarray, tags: Optional[List[dict]] = None):
-        if embeddings.size == 0 or not texts:
-            return
-
-        vecs = embeddings.astype('float32')
-        if vecs.ndim == 1:
-            vecs = vecs.reshape(1, -1)
-
-        # Dynamic dimension adjustment for FAISS if needed
-        actual_dim = vecs.shape[1]
-        if actual_dim != self.dimension:
-            logger.warning(
-                "Embedding dimension changed from %s to %s. "
-                "Dropping incompatible local vectors; re-index documents for best RAG results.",
-                self.dimension,
-                actual_dim,
-            )
-            self.dimension = actual_dim
-            compatible_vectors = []
-            compatible_metadata = []
-            compatible_metadata_tags = []
-            for i, (existing_vec, text) in enumerate(zip(self.vectors_list, self.metadata)):
-                if np.asarray(existing_vec).reshape(-1).shape[0] == self.dimension:
-                    compatible_vectors.append(existing_vec)
-                    compatible_metadata.append(text)
-                    if hasattr(self, 'metadata_tags') and i < len(self.metadata_tags):
-                        compatible_metadata_tags.append(self.metadata_tags[i])
-                    else:
-                        compatible_metadata_tags.append({})
-            self.vectors_list = compatible_vectors
-            self.metadata = compatible_metadata
-            self.metadata_tags = compatible_metadata_tags
-            if HAS_FAISS:
-                self.index = faiss.IndexFlatL2(self.dimension)
-                if self.vectors_list:
-                    existing_mat = np.array(self.vectors_list, dtype=np.float32)
-                    if existing_mat.ndim > 1 and existing_mat.shape[1] == self.dimension:
-                        self.index.add(existing_mat)
-
-        if self.pinecone_index is not None:
+    @contextmanager
+    def _writer(self):
+        with self._lock, open(self.store_path / ".write.lock", "a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
             try:
-                import uuid
-                vectors_to_upsert = []
-                for idx, (vec, text) in enumerate(zip(vecs, texts)):
-                    doc_id = str(uuid.uuid4())
-                    tag = tags[idx] if tags and idx < len(tags) else {}
-                    metadata_payload = {"text": text}
-                    if tag:
-                        metadata_payload.update(tag)
-                    vectors_to_upsert.append((doc_id, vec.tolist(), metadata_payload))
-                self.pinecone_index.upsert(vectors=vectors_to_upsert)
-                logger.info(f"Upserted {len(vectors_to_upsert)} vectors to Pinecone Cloud.")
-            except Exception as e:
-                logger.error(f"Pinecone Cloud upsert error: {e}")
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
+    @staticmethod
+    def _chunk_id(text, tag):
+        return hashlib.sha256(json.dumps([text, tag], ensure_ascii=False,
+                                        sort_keys=True).encode()).hexdigest()
+
+    def _rebuild_dense(self):
+        self.index = None
         if HAS_FAISS:
-            if self.index is None:
-                self.index = faiss.IndexFlatL2(self.dimension)
-            self.index.add(vecs)
-        
-        for idx, (vec, text) in enumerate(zip(vecs, texts)):
-            self.vectors_list.append(vec)
-            self.metadata.append(text)
-            tag = tags[idx] if tags and idx < len(tags) else {}
-            self.metadata_tags.append(tag)
-
+            self.index = faiss.IndexFlatL2(self.dimension)
+            if self.vectors_list:
+                self.index.add(np.asarray(self.vectors_list, dtype=np.float32))
         self._rebuild_bm25()
-        self.save_index()
+
+    def add_batch(self, texts: List[str], embeddings: np.ndarray, tags: Optional[List[dict]] = None):
+        if not current_policy().allow_persistence:
+            raise PermissionError("Private content cannot be indexed persistently.")
+        if not texts:
+            return False
+        vecs = np.asarray(embeddings, dtype=np.float32)
+        if vecs.ndim == 1 and len(texts) == 1:
+            vecs = vecs.reshape(1, -1)
+        if (vecs.ndim != 2 or vecs.shape != (len(texts), self.dimension)
+                or not np.isfinite(vecs).all()
+                or any(not isinstance(text, str) or not text.strip() for text in texts)):
+            raise ValueError("Embedding rows, text and index dimension must match exactly.")
+        if tags is not None and (len(tags) != len(texts) or any(not isinstance(t, dict) for t in tags)):
+            raise ValueError("Every chunk must have exactly one metadata object.")
+        tags = tags if tags is not None else [{} for _ in texts]
+        # Validate JSON before changing any in-memory or persisted state.
+        json.dumps(tags, allow_nan=False)
+        with self._writer():
+            if self.snapshot_file.exists() or self.backup_file.exists():
+                self.load_index()
+            previous = (self.metadata[:], self.metadata_tags[:], self.vectors_list[:])
+            known = {self._chunk_id(text, tag) for text, tag in zip(self.metadata, self.metadata_tags)}
+            try:
+                for text, vec, tag in zip(texts, vecs, tags):
+                    identity = self._chunk_id(text, tag)
+                    if identity not in known:
+                        self.metadata.append(text)
+                        self.metadata_tags.append(dict(tag))
+                        self.vectors_list.append(vec.copy())
+                        known.add(identity)
+                self._rebuild_dense()
+                self.save_index()
+            except BaseException:
+                self.metadata, self.metadata_tags, self.vectors_list = previous
+                self._rebuild_dense()
+                raise
+        if self.pinecone_index is not None and current_policy().allow_cloud:
+            try:
+                records = [(self._chunk_id(text, tag), vec.tolist(), {"text": text, **tag})
+                           for text, vec, tag in zip(texts, vecs, tags)]
+                self.pinecone_index.upsert(vectors=records, namespace=self.model_id or "legacy")
+            except Exception:
+                logger.warning("Cloud index unavailable; local committed copy retained.")
+        return True
 
     def retrieve(self, query_embedding: np.ndarray, query_text: Optional[str] = None, k: int = 3, filters: Optional[dict] = None) -> List[Tuple[int, float, str]]:
+        with self._lock:
+            return self._retrieve(query_embedding, query_text, k, filters)
+
+    def _retrieve(self, query_embedding: np.ndarray, query_text: Optional[str] = None, k: int = 3, filters: Optional[dict] = None) -> List[Tuple[int, float, str]]:
         if len(self.metadata) == 0 and self.pinecone_index is None:
             return []
 
@@ -163,11 +175,11 @@ class VectorStore:
                 vec.shape[0],
                 self.dimension,
             )
-            return []
+            vec = np.array([], dtype=np.float32)
         vector_results = []
 
         # 1. Pinecone Retrieval
-        if self.pinecone_index is not None:
+        if self.pinecone_index is not None and current_policy().allow_cloud and vec.size:
             try:
                 filter_dict = {}
                 if filters:
@@ -178,6 +190,7 @@ class VectorStore:
                     vector=vec.tolist(),
                     top_k=max(k*3, 10),
                     include_metadata=True,
+                    namespace=self.model_id or "legacy",
                     filter=filter_dict if filter_dict else None
                 )
                 for idx, match in enumerate(res.matches):
@@ -188,7 +201,7 @@ class VectorStore:
                 logger.error(f"Pinecone Cloud query error, falling back: {e}")
 
         # 2. Local Dense Retrieval (FAISS or Numpy) if Pinecone returned empty
-        if not vector_results and self.metadata:
+        if not vector_results and self.metadata and vec.size:
             vec_mat = vec.reshape(1, -1)
             if HAS_FAISS and self.index is not None and self.index.ntotal > 0:
                 search_k = min(max(k * 5, 50), self.index.ntotal)
@@ -266,92 +279,107 @@ class VectorStore:
                 return [(i, float(1.0 - score), text) for i, (text, score) in enumerate(sorted_docs)]
 
         # Fallback to standard vector results
+        if not vector_results and query_text and self.metadata:
+            tokens = set(self._tokenize(query_text))
+            lexical = []
+            for i, text in enumerate(self.metadata):
+                tag = self.metadata_tags[i]
+                if filters and any(value and tag.get(key) != value for key, value in filters.items()):
+                    continue
+                overlap = len(tokens.intersection(self._tokenize(text)))
+                if overlap:
+                    lexical.append((i, 1.0 / (1 + overlap), text))
+            return sorted(lexical, key=lambda item: item[1])[:k]
         return vector_results[:k]
 
-    def save_index(self):
+    def _snapshot_payload(self):
+        return {"schema_version": 1, "model_id": self.model_id,
+                "dimension": self.dimension, "texts": self.metadata,
+                "tags": self.metadata_tags,
+                "vectors": [np.asarray(v).tolist() for v in self.vectors_list]}
+
+    def _decode_snapshot(self, path):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != 1:
+            raise ValueError("Unsupported index snapshot schema.")
+        dimension = payload["dimension"]
+        if dimension != self.dimension or payload.get("model_id") != self.model_id:
+            raise ValueError("Index model identity or dimension is incompatible; use a separate index.")
+        texts, tags = payload["texts"], payload["tags"]
+        if (not isinstance(texts, list) or any(not isinstance(t, str) for t in texts)
+                or not isinstance(tags, list) or len(tags) != len(texts)
+                or any(not isinstance(t, dict) for t in tags)):
+            raise ValueError("Index metadata is inconsistent.")
+        vectors = np.asarray(payload["vectors"], dtype=np.float32)
+        if not texts and vectors.size == 0:
+            vectors = np.empty((0, dimension), dtype=np.float32)
+        if vectors.shape != (len(texts), dimension) or not np.isfinite(vectors).all():
+            raise ValueError("Index vectors are inconsistent.")
+        return texts, tags, list(vectors)
+
+    def _atomic_write(self, path, data):
+        descriptor, temporary = tempfile.mkstemp(prefix=".index-", dir=self.store_path)
         try:
-            if HAS_FAISS and self.index is not None:
-                faiss.write_index(self.index, str(self.index_file))
-            with open(self.metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(self.metadata, f, ensure_ascii=False)
-            with open(self.metadata_tags_file, 'w', encoding='utf-8') as f:
-                json.dump(self.metadata_tags, f, ensure_ascii=False)
-            if self.vectors_list:
-                np.save(self.vectors_file, np.array(self.vectors_list))
-            logger.info(f"Vector store saved to {self.store_path}")
-        except Exception as e:
-            logger.error(f"Failed to save vector store: {e}")
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def save_index(self):
+        if not current_policy().allow_persistence:
+            raise PermissionError("Private sessions cannot persist an index.")
+        with self._lock:
+            payload = json.dumps(self._snapshot_payload(), ensure_ascii=False,
+                                 allow_nan=False).encode("utf-8")
+            if self.snapshot_file.exists():
+                try:
+                    self._decode_snapshot(self.snapshot_file)
+                except (ValueError, KeyError, TypeError):
+                    pass  # Do not replace a valid backup with a corrupt primary.
+                else:
+                    self._atomic_write(self.backup_file, self.snapshot_file.read_bytes())
+            self._atomic_write(self.snapshot_file, payload)
+            # Publish is complete only once its directory entry is durable.
+            descriptor = os.open(self.store_path, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        return True
 
     def load_index(self):
-        if self.metadata_file.exists():
-            try:
-                with open(self.metadata_file, 'r', encoding='utf-8') as f:
-                    loaded_metadata = json.load(f)
-                if not isinstance(loaded_metadata, list) or not all(isinstance(item, str) for item in loaded_metadata):
-                    raise ValueError("metadata.json must contain a list of strings")
-                self.metadata = loaded_metadata
-
-                if self.metadata_tags_file.exists():
-                    try:
-                        with open(self.metadata_tags_file, 'r', encoding='utf-8') as f:
-                            self.metadata_tags = json.load(f)
-                    except Exception as e:
-                        logger.error(f"Failed to load metadata tags: {e}")
-                        self.metadata_tags = [{} for _ in self.metadata]
-                else:
-                    self.metadata_tags = [{} for _ in self.metadata]
-
-                if len(self.metadata_tags) != len(self.metadata):
-                    if len(self.metadata_tags) < len(self.metadata):
-                        self.metadata_tags.extend([{} for _ in range(len(self.metadata) - len(self.metadata_tags))])
-                    else:
-                        self.metadata_tags = self.metadata_tags[:len(self.metadata)]
-
-                if self.vectors_file.exists():
-                    vecs = np.load(self.vectors_file)
-                    self.vectors_list = list(vecs)
-                    if vecs.ndim > 1:
-                        self.dimension = vecs.shape[1]
-
-                if HAS_FAISS and self.index_file.exists():
-                    self.index = faiss.read_index(str(self.index_file))
-                    self.dimension = self.index.d
-                elif HAS_FAISS and self.vectors_list:
-                    self.index = faiss.IndexFlatL2(self.dimension)
-                    self.index.add(np.array(self.vectors_list, dtype=np.float32))
-
-                self._rebuild_bm25()
-                logger.info(f"Vector store loaded successfully from {self.store_path}")
-            except Exception as e:
-                logger.error(f"Failed to load vector store: {e}")
-                self.metadata = []
-                self.metadata_tags = []
-                self.vectors_list = []
-        elif self.legacy_metadata_file.exists():
-            logger.warning(
-                "Ignoring legacy metadata.pkl because pickle can execute code. "
-                "Set BLINDASSIST_TRUST_LEGACY_PICKLE=1 once to migrate a trusted local store."
-            )
-            if os.getenv("BLINDASSIST_TRUST_LEGACY_PICKLE") == "1":
+        with self._lock:
+            found = False
+            for path in (self.snapshot_file, self.backup_file):
+                if not path.exists():
+                    continue
+                found = True
                 try:
-                    import pickle
-                    with open(self.legacy_metadata_file, 'rb') as f:
-                        loaded_metadata = pickle.load(f)
-                    if not isinstance(loaded_metadata, list) or not all(isinstance(item, str) for item in loaded_metadata):
-                        raise ValueError("legacy metadata must contain a list of strings")
-                    self.metadata = loaded_metadata
-                    if self.vectors_file.exists():
-                        vecs = np.load(self.vectors_file)
-                        self.vectors_list = list(vecs)
-                        if vecs.ndim > 1:
-                            self.dimension = vecs.shape[1]
-                    if HAS_FAISS and self.vectors_list:
-                        self.index = faiss.IndexFlatL2(self.dimension)
-                        self.index.add(np.array(self.vectors_list, dtype=np.float32))
-                    self._rebuild_bm25()
-                    self.save_index()
-                    logger.info("Migrated trusted legacy metadata.pkl to metadata.json.")
-                except Exception as e:
-                    logger.error(f"Failed to migrate legacy vector store: {e}")
-                    self.metadata = []
-                    self.vectors_list = []
+                    state = self._decode_snapshot(path)
+                except (ValueError, KeyError, TypeError, OSError):
+                    logger.warning("Index snapshot could not be loaded.")
+                    continue
+                self.metadata, self.metadata_tags, self.vectors_list = state
+                self._rebuild_dense()
+                return
+            if found:
+                raise ValueError("No valid compatible index snapshot; original files retained.")
+            # Preserve legacy files. Import validated JSON/NumPy only; never pickle.
+            if self.metadata_file.exists() and self.vectors_file.exists():
+                texts = json.loads(self.metadata_file.read_text(encoding="utf-8"))
+                tags = (json.loads(self.metadata_tags_file.read_text(encoding="utf-8"))
+                        if self.metadata_tags_file.exists() else [{} for _ in texts])
+                vectors = np.load(self.vectors_file, allow_pickle=False)
+                if (not isinstance(texts, list) or any(not isinstance(t, str) for t in texts)
+                        or len(tags) != len(texts) or any(not isinstance(t, dict) for t in tags)
+                        or vectors.shape != (len(texts), self.dimension) or not np.isfinite(vectors).all()
+                        or self.model_id is not None):
+                    raise ValueError("Legacy index needs explicit model-specific reingestion; files retained.")
+                self.metadata, self.metadata_tags, self.vectors_list = texts, tags, list(vectors)
+            elif self.legacy_metadata_file.exists():
+                logger.warning("Ignoring unsafe legacy pickle; reingest original documents.")
+            self._rebuild_dense()

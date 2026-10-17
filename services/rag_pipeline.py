@@ -2,6 +2,11 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 import re
+import hashlib
+import json
+import os
+import tempfile
+from modules.privacy_policy import current_policy
 from PIL import Image
 from .embedder import Embedder
 from .vector_store import VectorStore
@@ -136,24 +141,48 @@ class RAGPipeline:
         """
         Takes raw OCR text or document text, chunks it, embeds it, and stores it in vector store.
         """
+        if not current_policy().allow_persistence:
+            return False
         if not text or not text.strip():
             logger.warning("No text provided for indexing.")
-            return
+            return False
 
         try:
             chunks = self._chunk_text(text)
             logger.info(f"Indexing text into {len(chunks)} chunks.")
 
+            source_id = hashlib.sha256(json.dumps([text, tags or {}], sort_keys=True).encode()).hexdigest()
+            # Source text is independent of any embedding model, including on
+            # a failed embedding request. It can be reingested into a new index.
+            if isinstance(getattr(self.vector_store, "store_path", None), Path):
+                sources = self.vector_store.store_path.parent / "sources"
+                sources.mkdir(parents=True, exist_ok=True)
+                descriptor, temporary = tempfile.mkstemp(prefix=".source-", dir=sources)
+                try:
+                    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                        json.dump({"id": source_id, "text": text, "tags": tags or {}}, handle, ensure_ascii=False)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, sources / f"{source_id}.json")
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+
             embeddings = self.embedder.get_embeddings(chunks)
             if embeddings.size > 0:
-                chunk_tags = [tags] * len(chunks) if tags else None
-                self.vector_store.add_batch(chunks, embeddings, tags=chunk_tags)
+                chunk_tags = [{**(tags or {}), "document_id": source_id, "chunk": i}
+                              for i in range(len(chunks))]
+                committed = self.vector_store.add_batch(chunks, embeddings, tags=chunk_tags)
+                if not committed:
+                    return False
                 logger.info("Text successfully indexed in vector store.")
+                return True
             else:
                 logger.warning("Embedding generation returned empty matrix.")
 
         except Exception as e:
-            logger.error(f"Error indexing document: {e}")
+            logger.error("Document indexing failed (%s).", type(e).__name__)
+        return False
 
     def index_file(self, file_path: str, tags: Optional[dict] = None) -> bool:
         """
@@ -196,15 +225,14 @@ class RAGPipeline:
             if path.suffix.lower() == '.md':
                 content = self._describe_markdown_images(path, content)
 
-            self.index_document(content, tags=tags)
-            return True
+            return bool(self.index_document(content, tags=tags))
         except Exception as e:
             logger.error(f"Failed to read file {file_path}: {e}")
             return False
 
     def process_scan(self, text: str):
         """Alias for index_document (backwards compatibility)."""
-        self.index_document(text)
+        return self.index_document(text)
 
     def ask_question(self, query: str, top_k: int = 3, filters: Optional[dict] = None) -> str:
         """

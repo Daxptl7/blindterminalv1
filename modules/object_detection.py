@@ -30,11 +30,8 @@ CONFIG_PATH = BASE_DIR / "config" / "settings.json"
 
 
 def _load_settings() -> dict:
-    try:
-        with open(CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    from modules.config_loader import load_settings
+    return load_settings()
 
 
 _settings = _load_settings()
