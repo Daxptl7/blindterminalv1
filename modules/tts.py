@@ -165,7 +165,11 @@ BONE_DEVICE = EARPHONE_DEVICE
 
 # ── OPTIONAL BACKENDS ────────────────────────────────────────
 PYGAME_AVAILABLE = False
-_current_device = None
+# Public startup/menu speech must use the same route as public mode prompts.
+# Starting on SDL's default and switching only after mode selection can make
+# the welcome audible while all subsequent speech goes to a different card.
+_current_device = "default" if IS_MACOS else SPEAKER_DEVICE
+logger.info("Public speech output configured as %s.", _current_device)
 try:
     import pygame
 
@@ -173,7 +177,6 @@ try:
     # uses a separate process, which cannot open a card held by SDL's mixer.
     # Open the mixer only for pygame playback and close it when that ends.
     PYGAME_AVAILABLE = True
-    _current_device = "default"
     logger.info("pygame available; mixer will open only during default playback.")
 except ImportError:
     logger.info("pygame not installed — falling back to system audio players.")

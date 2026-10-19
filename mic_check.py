@@ -11,6 +11,7 @@ that jumps when you speak is the microphone.
     python3 mic_check.py            # test every capture card, then offer to save
     python3 mic_check.py --list     # just list devices, no recording
     python3 mic_check.py --select plughw:2,0  # save a listed capture device, no recording
+    python3 mic_check.py --select plughw:3,0 --earphone plughw:3,0 --speaker plughw:2,0
 
 The chosen card is written to config/settings.json as "mic_device", used by
 voice.py's arecord backend and, without an override, live translation on Linux.
@@ -73,11 +74,11 @@ def list_devices():
         pa.terminate()
 
 
-def capture_cards():
-    """['plughw:2,0', 'plughw:3,0'] — every real capture device, in order."""
+def hardware_devices(player):
+    """Enumerate actual capture (arecord) or playback (aplay) endpoints."""
     devices = []
     try:
-        out = subprocess.run(["arecord", "-l"], capture_output=True, text=True,
+        out = subprocess.run([player, "-l"], capture_output=True, text=True,
                              timeout=5).stdout
     except Exception:
         return devices
@@ -93,6 +94,11 @@ def capture_cards():
         except (IndexError, ValueError):
             continue
     return devices
+
+
+def capture_cards():
+    """Every real numeric capture endpoint, in order."""
+    return hardware_devices("arecord")
 
 
 def _dbfs(samples):
@@ -155,17 +161,31 @@ def test_device(device):
             "peak": peak, "jump": jump, "hears": jump >= SPEECH_MARGIN_DB}
 
 
-def save_choice(device):
+def save_choice(device, speaker=None, earphone=None):
     try:
         settings = json.loads(CONFIG_PATH.read_text())
     except Exception as e:
         print(f"Could not read {CONFIG_PATH}: {e}")
         return False
     settings["mic_device"] = device
+    if speaker is not None:
+        settings["speaker_device"] = speaker
+    if earphone is not None:
+        settings["earphone_device"] = earphone
+        settings.pop("bone_device", None)
+    if speaker is not None or earphone is not None:
+        selected_earphone = settings.get("earphone_device") or settings.get("bone_device")
+        if selected_earphone == settings.get("speaker_device"):
+            print("Speaker and private earphones must use different playback outputs; settings were not changed.")
+            return False
     try:
         CONFIG_PATH.write_text(json.dumps(settings, indent=2) + "\n")
         print(f"Saved mic_device = {device} to {CONFIG_PATH}")
-        print("Restart BlindAssist to use this microphone input.")
+        if speaker is not None:
+            print(f"Saved speaker_device = {speaker}")
+        if earphone is not None:
+            print(f"Saved earphone_device = {earphone}")
+        print("Restart BlindAssist to use the selected audio devices.")
         return True
     except Exception as e:
         print(f"Could not write {CONFIG_PATH}: {e}")
@@ -177,7 +197,11 @@ def main():
     options = parser.add_mutually_exclusive_group()
     options.add_argument("--list", action="store_true", help="list devices without recording")
     options.add_argument("--select", metavar="DEVICE", help="save a listed capture route without recording")
+    parser.add_argument("--speaker", metavar="DEVICE", help="with --select, also save the public playback route")
+    parser.add_argument("--earphone", metavar="DEVICE", help="with --select, also save the private playback route")
     args = parser.parse_args()
+    if (args.speaker is not None or args.earphone is not None) and not args.select:
+        parser.error("--speaker and --earphone require --select")
     if args.list:
         list_devices()
         return
@@ -188,7 +212,14 @@ def main():
             print("Available capture routes: " + (", ".join(devices) or "none"))
             print("Connect a headset microphone input and run python3 mic_check.py --list.")
             return 1
-        return 0 if save_choice(args.select) else 1
+        if args.speaker is not None or args.earphone is not None:
+            outputs = hardware_devices("aplay")
+            for role, route in (("speaker", args.speaker), ("earphone", args.earphone)):
+                if route is not None and route not in outputs:
+                    print(f"The {role} route {route} is not listed for playback; settings were not changed.")
+                    print("Available playback routes: " + (", ".join(outputs) or "none"))
+                    return 1
+        return 0 if save_choice(args.select, speaker=args.speaker, earphone=args.earphone) else 1
 
     list_devices()
     devices = capture_cards()

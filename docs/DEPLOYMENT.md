@@ -71,6 +71,21 @@ An analogue headset requires a microphone-capable connection; the Raspberry Pi's
 onboard 3.5 mm audio/video output is not a headset microphone input. See
 [Raspberry Pi audio options](https://pip-assets.raspberrypi.com/categories/1259-audio-camera-and-display/documents/RP-008124-WP/Choosing-an-Audio-option).
 
+Set all three routes together when the headset adapter and speaker have been
+identified. For a headset input/output on card 3 and a speaker on card 2:
+
+```bash
+python3 mic_check.py --select plughw:3,0 --earphone plughw:3,0 --speaker plughw:2,0
+```
+
+This saves the Pi's own settings without recording or playing audio, checks
+that each route is listed for the required direction, and removes the legacy
+`bone_device` key when replacing the earphone route. Enumeration cannot establish
+which physical speaker or earphone is connected; identify those by listening.
+Speaker and private earphone playback routes must be distinct. Startup welcome,
+menu speech and public mode prompts now all use the configured speaker route;
+the app no longer starts on the default output then switches at mode selection.
+
 Speech loudness and speed are configured in `config/settings.json`:
 `tts_rate: 180` controls offline words per minute, `tts_playback_speed: 1.2`
 speeds up Google speech, and `tts_gain: 2.0` with
