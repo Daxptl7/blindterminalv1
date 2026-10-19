@@ -94,6 +94,13 @@ speeds up Google speech, and `tts_gain: 2.0` with
 loudness adjustment remains available when the audio can be decoded, while
 Google speech retains its original speed. Restart the application after edits.
 
+Voice transcription normalizes a copy of the recorded audio in memory. Its
+gain uses the 99.5th-percentile sample peak so isolated button taps or USB
+clicks cannot suppress the gain of the entire recording; brief outliers are
+limited to the PCM range. The filtered and unfiltered recognition attempts
+are normalized independently. Saved source WAV files are unchanged. This
+processing does not change microphone mixer gain or automatic gain control.
+
 Privacy is selected before content capture. A private session prohibits cloud
 OCR/STT/AI/translation/TTS and persistent indexing. Temporary private recordings
 are removed after transcription or session cleanup. The operating system's disk

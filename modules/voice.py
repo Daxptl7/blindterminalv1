@@ -705,7 +705,7 @@ def _resample_to_16k(samples: np.ndarray, rate: int) -> np.ndarray:
 
 
 def _normalize(samples: np.ndarray) -> np.ndarray:
-    """Remove DC offset and lift the level, peak-limited rather than clipped."""
+    """Lift quiet speech without letting a few transient peaks set its gain."""
     if samples.size == 0:
         return samples
     centred = samples - float(np.mean(samples))
@@ -717,11 +717,15 @@ def _normalize(samples: np.ndarray) -> np.ndarray:
     gain = min(target_rms / rms, NORMALIZE_MAX_GAIN)
     if gain <= 1.0:
         return centred                           # already loud enough
-    boosted = centred * gain
-    peak = float(np.max(np.abs(boosted)))
-    if peak > 32000.0:
-        boosted *= 32000.0 / peak
-    return boosted
+    # Button taps and USB clicks can contain a handful of near-full-scale
+    # samples while the voice is very quiet. Scaling the whole recording to
+    # its single largest sample used to cancel almost all requested gain.
+    # Limit against a robust peak, then saturate only the brief outliers. The
+    # original saved WAV is retained; this is the in-memory STT copy only.
+    speech_peak = float(np.percentile(np.abs(centred), 99.5))
+    if speech_peak > 0:
+        gain = min(gain, 32000.0 / speech_peak)
+    return np.clip(centred * gain, -32000.0, 32000.0)
 
 
 def _bandpass(samples: np.ndarray, rate: int = SAMPLE_RATE,
@@ -1304,10 +1308,13 @@ def _transcribe(pcm: bytes, lang: str) -> Optional[str]:
     normalized = _normalize(raw)
     logger.info(f"Level {_dbfs(raw):.0f} dBFS -> {_dbfs(normalized):.0f} dBFS after gain")
 
-    for label, samples in (("filtered", _bandpass(normalized)),
+    # Filtering can lower the voice level. Normalize each variant after its
+    # own processing instead of sending an attenuated filtered clip to STT.
+    for label, samples in (("filtered", _normalize(_bandpass(raw))),
                            ("unfiltered", normalized)):
         if samples.size == 0 or _dbfs(samples) <= SILENCE_DBFS:
             continue
+        logger.info("Speech recognition %s audio at %.0f dBFS.", label, _dbfs(samples))
         result = _run_engines(_to_pcm(samples), lang)
         if result:
             if label != "filtered":
