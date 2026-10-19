@@ -190,8 +190,6 @@ def clear_private_recordings():
                 _last_recording = None
 BEEP_ENABLED = bool(_settings.get("voice_beep", True))
 UNMUTE_MIC = bool(_settings.get("voice_unmute_mic", True))
-MIC_CAPTURE_PERCENT = int(_settings.get("voice_mic_capture_percent", 50))
-MIC_AUTO_GAIN = bool(_settings.get("voice_mic_auto_gain_enabled", False))
 
 # -20 dBFS is roughly what the recognisers are tuned for; a USB electret on a
 # Pi lands nearer -35, and every engine degrades sharply on input that quiet.
@@ -786,7 +784,7 @@ def _mic_card_number() -> Optional[str]:
 
 
 def _unmute_microphone():
-    """Set and enable capture without forcing maximum gain or mic monitoring.
+    """Raise and unmute the capture control. Best-effort, every call optional.
 
     A muted capture mixer records digital silence on a perfectly good card, and
     the resulting "I didn't catch that" sends the user hunting for a loose plug.
@@ -796,17 +794,13 @@ def _unmute_microphone():
     card = _mic_card_number()
     if not card or not shutil.which("amixer"):
         return
-    level = f"{MIC_CAPTURE_PERCENT}%"
-    for args in (["sset", "Auto Gain Control", "on" if MIC_AUTO_GAIN else "off"],
-                 ["sset", "Mic", "capture", level, "cap"],
-                 ["sset", "Capture", "capture", level, "cap"]):
+    for args in (["sset", "Mic", "100%"], ["sset", "Mic", "cap"],
+                 ["sset", "Capture", "100%"], ["sset", "Capture", "cap"]):
         try:
-            result = subprocess.run(["amixer", "-c", card] + args, timeout=3,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if result.returncode:
-                logger.debug("Capture mixer control %s is unavailable on card %s.", args[1], card)
-        except Exception as e:
-            logger.debug("Capture mixer setup unavailable (%s).", type(e).__name__)
+            subprocess.run(["amixer", "-c", card] + args, timeout=3,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
 
 _unmute_microphone()

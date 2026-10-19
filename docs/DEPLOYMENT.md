@@ -86,17 +86,6 @@ Speaker and private earphone playback routes must be distinct. Startup welcome,
 menu speech and public mode prompts now all use the configured speaker route;
 the app no longer starts on the default output then switches at mode selection.
 
-Microphone setup defaults to `voice_mic_capture_percent: 50` and
-`voice_mic_auto_gain_enabled: false`, applied at voice-module startup when
-`voice_unmute_mic` is enabled (the default). Capture remains enabled, while
-microphone monitoring/playback volume is left alone. Tune the percentage to
-the actual headset; maximum gain can overload an attached microphone. Set
-`voice_unmute_mic: false` to manage these mixer settings outside the app.
-`mic_check.py` reports excessive quiet levels or clipping as an inconclusive
-overload and does not select that input. A low quiet-to-speaking difference
-alone cannot establish that a microphone is unplugged. Optional PortAudio
-enumeration is available with `--portaudio`; normal diagnostics use ALSA only.
-
 Speech loudness and speed are configured in `config/settings.json`:
 `tts_rate: 180` controls offline words per minute, `tts_playback_speed: 1.2`
 speeds up Google speech, and `tts_gain: 2.0` with
