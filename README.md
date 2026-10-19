@@ -140,6 +140,8 @@ After each answer, press Button 1 once to ask a follow-up question or Button 2
 once to return to the main menu. A follow-up keeps the recent conversation and
 the same privacy/output choice. Finish each recording with three Button 3
 presses as usual. An unanswered follow-up prompt returns to the menu.
+While an answer is still speaking, Button 1 once stops playback and opens the
+follow-up recording flow immediately, keeping the interrupted answer as context.
 
 ---
 

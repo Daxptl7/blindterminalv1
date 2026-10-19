@@ -16,6 +16,12 @@ RAW:3 is emitted at press time, including a press subsequently held down.
 
 ## Voice Ask follow-up questions
 
+While Mode 3 is reading an answer, Button 1 once interrupts the current speech
+and its remaining sections. The device goes directly to the follow-up recording
+prompt, keeping the generated answer as recent conversation context and noting
+that playback was interrupted. The ordinary yes/no prompt is skipped in this
+case. Wait for the recording cue, then speak; finish with three Button 3 presses.
+
 After Mode 3 finishes reading its answer, it asks whether to continue:
 
 - Button 1 once: record a follow-up question. Finish recording with three

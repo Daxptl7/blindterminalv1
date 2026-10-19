@@ -138,7 +138,7 @@ for configured_logger in [logging.getLogger(), *[
 def _has(mod_name):
     return _modules.get(mod_name) is not None
 
-def _speak(text, block=False, lang="eng"):
+def _speak(text, block=False, lang="eng", stop_check=None):
     """Safe TTS — works even if tts module failed to load.
 
     `lang` picks the voice. It matters for exactly one thing today — reading a
@@ -147,7 +147,10 @@ def _speak(text, block=False, lang="eng"):
     silence or nonsense.
     """
     if _has("tts"):
-        return _modules["tts"].speak(text, lang=lang, block=block or current_policy().private)
+        options = {"lang": lang, "block": block or current_policy().private}
+        if stop_check is not None:
+            options["stop_check"] = stop_check
+        return _modules["tts"].speak(text, **options)
     else:
         if not current_policy().private:
             print(f"[TTS OFFLINE] {text}")
@@ -608,6 +611,44 @@ def mode_morse_type():
     else:
         _speak("AI module is not available.")
 
+def _speak_voice_answer(answer):
+    """Read an answer; return True when Button 1 requests an early follow-up."""
+    from modules.confidential_mode import split_text_for_speech
+
+    serial = _morse_serial_singleton
+    interrupted = False
+
+    def follow_up_requested():
+        nonlocal interrupted
+        if interrupted:
+            return True
+        try:
+            button = serial.wait_for_raw_button(timeout=0.01)
+        except Exception as e:
+            logger.debug("Could not read the answer interrupt button: %s", type(e).__name__)
+            return False
+        if str(button) == "1":
+            interrupted = True
+        return interrupted
+
+    # The AI-processing watcher has already stopped. This caller is the only
+    # button consumer while speech plays, and stops reading before recording.
+    _drain_button_messages()
+    for chunk in split_text_for_speech(answer):
+        try:
+            if serial is None:
+                _speak(chunk, block=True)
+            else:
+                _speak(chunk, block=True, stop_check=follow_up_requested)
+        except Exception:
+            if not interrupted:
+                raise
+        if interrupted:
+            logger.info("Voice answer interrupted by Button 1 for a follow-up.")
+            return True
+    return False
+
+
 def mode_voice_ask():
     """Mode 3: spoken questions and button-selected conversational follow-ups."""
     logger.info("Mode 3: Voice Ask")
@@ -645,14 +686,15 @@ def mode_voice_ask():
         if not answer:
             return
 
-        # Finish the full answer before asking for a button choice.
-        from modules.confidential_mode import split_text_for_speech
-        for chunk in split_text_for_speech(answer):
-            _speak(chunk, block=True)
-
+        interrupted = _speak_voice_answer(answer)
+        answer_label = "Assistant (playback interrupted)" if interrupted else "Assistant"
         conversation = (
-            conversation + f"\nUser: {question[:1500]}\nAssistant: {answer[:3500]}\n"
+            conversation + f"\nUser: {question[:1500]}\n{answer_label}: {answer[:3500]}\n"
         )[-5500:]
+        if interrupted:
+            # Button 1 already chose yes. Keep context and go straight to the
+            # next microphone prompt instead of asking the same choice again.
+            continue
         choice = _select_with_buttons(
             ("1", "2"),
             "Would you like to ask a follow-up question? "

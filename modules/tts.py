@@ -955,11 +955,18 @@ class TTSManager:
 
     # ── PUBLIC API ───────────────────────────────────────────
     def speak(self, text: str, lang: str = "eng", block: bool = False,
-              timeout: float = 120.0, device: str = None):
+              timeout: float = 120.0, device: str = None, stop_check=None):
         if not text or not str(text).strip():
             return
         if not self.running:
             raise AudioRoutingError("Speech engine has shut down.")
+        if stop_check is not None:
+            # Observe cancellation in the caller, which owns the button
+            # reader and its privacy context. No competing serial thread.
+            block = True
+            if stop_check():
+                self.stop()
+                raise SpeechCancelled("Speech interrupted for a follow-up.")
 
         # Capture the selected output at enqueue time. This is important for
         # non-blocking speech: callers commonly queue a status message and
@@ -972,9 +979,19 @@ class TTSManager:
         item = _Utterance(str(text), lang, queued_device)
         self.queue.put(item, timeout=1)
         if block:
-            if not item.done.wait(timeout=timeout):
+            deadline = time.monotonic() + timeout
+            while not item.done.wait(timeout=min(0.05, max(0, deadline-time.monotonic()))):
+                if stop_check is not None and stop_check():
+                    self.stop()
+                    raise SpeechCancelled("Speech interrupted for a follow-up.")
+                if time.monotonic() >= deadline:
+                    self.stop()
+                    raise TimeoutError("Speech playback timed out.")
+            # Also catch a press made at the end of a chunk before another
+            # chunk or the follow-up choice prompt can consume/discard it.
+            if stop_check is not None and stop_check():
                 self.stop()
-                raise TimeoutError("Speech playback timed out.")
+                raise SpeechCancelled("Speech interrupted for a follow-up.")
             if item.error:
                 raise item.error
         return True
@@ -1026,6 +1043,11 @@ class TTSManager:
                 pygame.mixer.music.stop()
             except Exception:
                 pass
+        if getattr(self, "_engine_available", False):
+            try:
+                self._engine.stop()
+            except Exception:
+                pass
         self._speaking.clear()
 
     def shutdown(self):
@@ -1062,7 +1084,9 @@ def _get_manager() -> TTSManager:
     return _tts_manager
 
 
-def speak(text: str, lang: str = "eng", block: bool = False):
+def speak(text: str, lang: str = "eng", block: bool = False, *, stop_check=None):
+    if stop_check is not None:
+        return _get_manager().speak(text, lang, block, stop_check=stop_check)
     return _get_manager().speak(text, lang, block)
 
 
