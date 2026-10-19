@@ -194,9 +194,10 @@ class TranslationModeIntegrationTests(unittest.TestCase):
         with mock.patch.dict(main._modules, {
             "translator": translator,
             "privacy": privacy,
+            "voice": mock.Mock(),
         }), \
              mock.patch.object(main, "_select_with_buttons", side_effect=["1", "1", "3"]), \
-             mock.patch.object(main, "_keyboard_input", return_value="hello"), \
+             mock.patch.object(main, "_listen_until_stopped", return_value="hello"), \
              mock.patch.object(main, "_speak"):
             main.mode_translate()
 

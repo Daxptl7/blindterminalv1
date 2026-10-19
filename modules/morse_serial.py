@@ -267,9 +267,10 @@ class MorseSerial:
             remaining = deadline - time.time()
             msg = self.get_message(timeout=max(0.1, remaining))
             if msg and msg.startswith("RAW:"):
-                digits = "".join(ch for ch in msg.split(":", 1)[1] if ch.isdigit())
-                if digits:
-                    return int(digits[0])
+                button = {"RAW:1": 1, "RAW:2": 2, "RAW:3": 3}.get(msg)
+                if button is not None:
+                    logger.debug("Received physical button %s.", button)
+                    return button
                 logger.debug(f"Ignoring malformed raw button message: {msg!r}")
         return None
 

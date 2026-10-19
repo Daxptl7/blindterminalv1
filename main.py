@@ -801,7 +801,7 @@ def mode_translate():
     """
     Mode 4: Translate text.
 
-    Step 1 — ask HOW text will be entered  (1=type  2=Morse buttons  3=voice)
+    Step 1 — select input with one press (1=voice, 2=Morse, 3=live)
     Step 2 — get the text using that method
     Step 3 — choose source and target from English, Hindi and Gujarati
     Step 4 — translate and speak the result
@@ -816,29 +816,33 @@ def mode_translate():
         _speak("Translation module is not available.")
         return
 
+    def _translation_choice(prompt):
+        # Let the previous press finish producing its raw/decoded events
+        # before announcing a new menu. Preserve choices made during speech.
+        _settle_button_input()
+        return _select_with_buttons(("1", "2", "3"), prompt)
+
     # ── STEP 1: Choose input method ───────────────────────────────────────
     print("\n[Mode 4 — Translate]  input method")
-    print("  Button 1 → Type text")
+    print("  Button 1 → Voice / microphone (single phrase)")
     print("  Button 2 → Morse code buttons")
-    print("  Button 3 → Voice / microphone (Single phrase)")
-    print("  Button 4 (or double-tap Button 3) → Live Real-Time Conversation")
+    print("  Button 3 → Live real-time conversation")
 
-    input_choice = _select_with_buttons(
-        ("1", "2", "3", "4", "33"),
-        "Translation mode. "
-        "Press button 1 to type your text. "
+    input_choice = _translation_choice(
+        "Translation mode. Press one button once. "
+        "Press button 1 to speak a single phrase. "
         "Press button 2 to enter it in Morse code. "
-        "Press button 3 to speak a single phrase. "
-        "Or press button 4 or double tap button 3 for real-time live conversation.",
-        double="3"
+        "Press button 3 for real-time live conversation."
     )
 
-    if input_choice not in ("1", "2", "3", "4", "33"):
+    input_method = {"1": "voice", "2": "morse", "3": "live"}.get(input_choice)
+    if input_method is None:
         _speak("No button was pressed. Translation cancelled.")
         return
+    logger.info("Translation input selected: %s (button %s).", input_method, input_choice)
 
     # ── REAL-TIME LIVE CONVERSATION OPTION ──────────────────────────────
-    if input_choice in ("4", "33"):
+    if input_method == "live":
         if not _has("live_translator"):
             _speak("Real-time live translation module is not available.")
             return
@@ -847,8 +851,7 @@ def mode_translate():
         print("  Button 1 → English <-> Gujarati")
         print("  Button 2 → English <-> Hindi")
         print("  Button 3 → Hindi <-> Gujarati")
-        pair_choice = _select_with_buttons(
-            ("1", "2", "3"),
+        pair_choice = _translation_choice(
             "Live conversation mode. Press button 1 for English and Gujarati, "
             "button 2 for English and Hindi, or button 3 for Hindi and Gujarati."
         )
@@ -906,8 +909,7 @@ def mode_translate():
 
     def _choose_translation_direction() -> tuple[str, str] | None:
         print("\n  Source language: 1=English, 2=Hindi, 3=Gujarati")
-        source_choice = _select_with_buttons(
-            ("1", "2", "3"),
+        source_choice = _translation_choice(
             "Choose the source language. Press button 1 for English, "
             "button 2 for Hindi, or button 3 for Gujarati."
         )
@@ -917,8 +919,7 @@ def mode_translate():
         src, source_name = languages[source_choice]
         _speak(f"Source language: {source_name}.", block=True)
         print("  Target language: 1=English, 2=Hindi, 3=Gujarati")
-        target_choice = _select_with_buttons(
-            ("1", "2", "3"),
+        target_choice = _translation_choice(
             "Choose the target language. Press button 1 for English, "
             "button 2 for Hindi, or button 3 for Gujarati."
         )
@@ -938,24 +939,15 @@ def mode_translate():
     text = None
     direction_choice = None
 
-    if input_choice == "1":
-        # ── Type text on keyboard ──
-        _speak("Type your text and press Enter.")
-        text = _keyboard_input("Text: ", default=None)
-        if text is None:
-            _speak("No input received.")
-            return
-        if not text:
-            _speak("No text entered.")
-            return
-
-    elif input_choice == "2":
+    if input_method == "morse":
         # ── Morse code via Pico W buttons ──
         if _morse_serial_singleton is None and not _has("morse"):
-            _speak("Morse module is not available. Please try option 1 or 3 instead.")
+            _speak("Morse input is not available. Please choose voice input instead.")
             return
 
-        _prompt_started = time.time()
+        # Remove the selection's delayed Morse letter before asking for text.
+        # Draining after this prompt used to discard text entered during it.
+        _settle_button_input()
         _speak(
             "Morse input mode. "
             "Tap Button 1 for dot and Button 2 for dash. "
@@ -966,17 +958,6 @@ def mode_translate():
 
         # Use MorseSerial if Pico W is connected, else fall back to keyboard Morse
         if _morse_serial_singleton is not None:
-            # Button 2 selected this mode, and the Pico is still holding that
-            # press as a dash. Let its letter gap expire and throw away what it
-            # produces, or every word typed here begins with a phantom "T".
-            # Speaking the prompt normally covers the gap on its own; this only
-            # tops up the remainder if speech was unavailable and returned at
-            # once.
-            _waited = time.time() - _prompt_started
-            if _waited < _BUTTON_LETTER_SETTLE_S:
-                time.sleep(_BUTTON_LETTER_SETTLE_S - _waited)
-            _drain_button_messages()
-
             try:
                 typed = _morse_serial_singleton.type_word(timeout=60)
                 text = typed.strip() if typed else None
@@ -1009,10 +990,10 @@ def mode_translate():
         _speak("Morse text decoded.")
         logger.info("Translate — Morse input decoded successfully.")
 
-    elif input_choice == "3":
+    elif input_method == "voice":
         # ── Voice / microphone ──
         if not _has("voice"):
-            _speak("Voice module is not available. Please use option 1 instead.")
+            _speak("Voice input is not available. Please choose Morse input instead.")
             return
 
         # Voice recognition needs the source language before recording starts.
@@ -1048,7 +1029,7 @@ def mode_translate():
         return
 
     src, dest = direction_choice
-    if input_choice == "2" and src != "en":
+    if input_method == "morse" and src != "en":
         _speak(
             "Morse input currently supports English source text only. "
             "Please select English as the source or use voice input."

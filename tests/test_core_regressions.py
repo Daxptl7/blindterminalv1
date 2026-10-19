@@ -632,7 +632,7 @@ class RepairedDefectTests(unittest.TestCase):
                 ask_confidentiality=lambda _serial=None: "NORMAL"
             ),
         }), \
-             mock.patch.object(main, "_select_with_buttons", side_effect=["3", "2", "1"]), \
+             mock.patch.object(main, "_select_with_buttons", side_effect=["1", "2", "1"]), \
              mock.patch.object(
                  main,
                  "_listen_until_stopped",
@@ -663,7 +663,7 @@ class RepairedDefectTests(unittest.TestCase):
             ),
         }), \
              mock.patch.object(main, "_select_with_buttons",
-                               side_effect=["3", "1", "2"]), \
+                               side_effect=["1", "1", "2"]), \
              mock.patch.object(main, "_listen_until_stopped", listened), \
              mock.patch.object(main, "_morse_type_sentence") as morse, \
              mock.patch.object(main, "_speak"):
@@ -704,7 +704,7 @@ class RepairedDefectTests(unittest.TestCase):
         self.assertTrue(all(len(call.args[0]) <= 600 and call.kwargs["block"]
                             for call in chunks))
 
-    def test_translate_type_button_does_not_enter_morse_input(self):
+    def test_translate_voice_button_does_not_request_keyboard_text(self):
         main = importlib.import_module("main")
         translator = mock.Mock()
         translator.LANG_TO_TTS = {"en": "eng", "hi": "hin", "gu": "guj"}
@@ -714,13 +714,15 @@ class RepairedDefectTests(unittest.TestCase):
 
         with mock.patch.dict(main._modules, {
             "translator": translator,
+            "voice": mock.Mock(),
             "privacy": mock.Mock(
                 ask_confidentiality=mock.Mock(return_value="NORMAL")
             ),
         }), \
              mock.patch.object(main, "_select_with_buttons",
                                side_effect=["1", "1", "3"]), \
-             mock.patch.object(main, "_keyboard_input", return_value="hello"), \
+             mock.patch.object(main, "_listen_until_stopped", return_value="hello"), \
+             mock.patch.object(main, "_keyboard_input") as keyboard, \
              mock.patch.object(main, "_morse_type_sentence") as morse, \
              mock.patch.object(main, "_speak"):
             main.mode_translate()
@@ -729,8 +731,9 @@ class RepairedDefectTests(unittest.TestCase):
             "hello", from_lang="en", to_lang="gu", privacy=False
         )
         morse.assert_not_called()
+        keyboard.assert_not_called()
 
-    def test_live_translation_double_button_enters_live_mode(self):
+    def test_live_translation_single_button_enters_live_mode(self):
         main = importlib.import_module("main")
         translator = mock.Mock()
         live_module = mock.Mock()
@@ -743,7 +746,7 @@ class RepairedDefectTests(unittest.TestCase):
             "live_translator": live_module,
         }), \
              mock.patch.object(main, "_select_with_buttons",
-                               side_effect=["33", "1"]), \
+                               side_effect=["3", "1"]), \
              mock.patch.object(main, "_button3_stop_signal",
                                return_value=(stop_check, cancel_stop)) as stop, \
              mock.patch.object(main, "_settle_button_input"), \

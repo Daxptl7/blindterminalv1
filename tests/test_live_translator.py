@@ -358,7 +358,7 @@ class LiveMenuTests(unittest.TestCase):
         interpreter.run_live.side_effect = live_translator.LiveTranslationError("Check the USB speaker.")
         cancel = Mock()
         with patch.dict(main._modules,{"translator":Mock(),"live_translator":live_module}), \
-                patch.object(main,"_select_with_buttons",side_effect=["33","3"]), \
+                patch.object(main,"_select_with_buttons",side_effect=["3","3"]), \
                 patch.object(main,"_button3_stop_signal",return_value=(lambda:False,cancel)), \
                 patch.object(main,"_settle_button_input"), \
                 patch.object(main,"_speak") as speak:

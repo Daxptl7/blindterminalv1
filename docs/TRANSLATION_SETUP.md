@@ -9,6 +9,21 @@ For real-time speech interpretation, follow
 [live translation setup](LIVE_TRANSLATION_SETUP.md). It has its own Gemini
 streaming connection, audio-device preflight, and recorded-speech benchmark.
 
+## Translation buttons on the Pi
+
+Inside Mode 4, press one physical button once:
+
+- Button 1: speak a phrase. Choose source and target languages before recording.
+- Button 2: enter English text using the Morse buttons.
+- Button 3: start live conversation after choosing a language pair.
+
+There is no typed-text option or fourth button. Voice/Morse language menus use
+1 for English, 2 for Hindi and 3 for Gujarati. Finish a phrase recording with
+three Button 3 presses; stop a live conversation with two Button 3 presses.
+Each new menu lets the previous press settle before listening, then preserves
+choices made during the spoken prompt. Delayed events from the previous choice
+are cleared between menus. The log reports the input method actually selected.
+
 ## Laptop phase
 
 Use Python 3.10 or newer in a separate translation environment. The current

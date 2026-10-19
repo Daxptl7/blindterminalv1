@@ -1,6 +1,6 @@
 # Live speech translation on Raspberry Pi
 
-Mode 4 → double press Button 3 (or choose 4 on a keyboard) → select:
+Mode 4 → press Button 3 once for live conversation → select:
 
 1. English ↔ Gujarati
 2. English ↔ Hindi

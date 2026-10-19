@@ -29,6 +29,15 @@ mode only. The original private/public processing and output selection applies
 to every follow-up. Old button presses are cleared before the choice prompt,
 while a choice made during the prompt is preserved.
 
+## Translation input selection
+
+After entering Mode 4, press Button 1 once for a spoken phrase, Button 2 once
+for Morse input, or Button 3 once for live conversation. These are single button
+choices, not five-press Morse digits. The typed-text option has been removed.
+Source and target language menus use Button 1 for English, Button 2 for Hindi,
+and Button 3 for Gujarati. In live mode, choose a language pair instead, as
+described in [live translation setup](LIVE_TRANSLATION_SETUP.md).
+
 ## Apply and verify
 
 1. Copy the updated host files to the computer running BlindAssist and restart
