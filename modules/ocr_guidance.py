@@ -1,9 +1,10 @@
 """Local framing guidance for printed pages and phone screens.
 
-Preview analysis never transcribes or uploads text. Corrections must settle
-before capture; elapsed time alone is not evidence that a view is readable.
+Preview analysis never transcribes or uploads text. Capture requires steady,
+visible, sharp text; uncertain framing gets a bounded correction window.
 """
 from dataclasses import dataclass
+from bisect import bisect_left, bisect_right
 import time
 
 import cv2
@@ -16,6 +17,7 @@ DEFAULTS = {
     "ocr_guidance_repeat_interval_s": 10,
     "ocr_guidance_stable_frames": 4,
     "ocr_guidance_hold_seconds": 1.0,
+    "ocr_guidance_framing_grace_s": 8.0,
     "ocr_guidance_capture_attempts": 2,
     "ocr_guidance_rotation": 0,
     "ocr_guidance_mirror": False,
@@ -68,7 +70,29 @@ def _text_marks(gray):
                           if 2 <= s[2] <= w * .12 and 3 <= s[3] <= h * .15
                           and 4 <= s[4] <= h * w * .004
                           and .08 <= s[4] / (s[2] * s[3]) <= .95)
-    return candidates
+    # Desk texture, paper borders and glare also produce small components.
+    # Keep marks supported by another similar-sized mark on the same line.
+    # Reject duplicate/overlapping detections from the opposite polarity so
+    # they cannot certify an isolated speck as a line of text.
+    positioned = sorted(
+        [(float(s[1]+s[3]/2), int(s[0]), int(s[2]), int(s[3]), s)
+         for s in candidates], key=lambda item: item[0])
+    centers = [item[0] for item in positioned]
+    supported = []
+    for cy, x, width, height, mark in positioned:
+        # Restrict comparisons to nearby rows to keep preview work bounded
+        # when a textured background produces many small components.
+        nearby = positioned[bisect_left(centers, cy-height):
+                            bisect_right(centers, cy+height)]
+        for ocy, ox, ow, oh, _ in nearby:
+            if not .5 <= oh / height <= 2:
+                continue
+            gap = max(ox - (x + width), x - (ox + ow))
+            if (0 <= gap <= max(12 * height, w * .04)
+                    and abs(cy - ocy) <= max(height, oh) * .5):
+                supported.append(mark)
+                break
+    return supported
 
 
 def movement_prompt(direction, dx, dy, image_width, image_height, page, config):
@@ -149,7 +173,8 @@ class FrameAnalyzer:
             if len(polygon) != 4 or not cv2.isContourConvex(polygon):
                 continue
             x, y, bw, bh = cv2.boundingRect(polygon)
-            inside = [s for s in marks if x < s[0] < x+bw and y < s[1] < y+bh]
+            inside = [s for s in marks if cv2.pointPolygonTest(
+                polygon, (float(s[0]+s[2]/2), float(s[1]+s[3]/2)), False) > 0]
             # The full frame is not a useful boundary for centering guidance.
             if len(inside) >= 2 and area < h*w*.97:
                 score = len(inside) / max(area, 1) ** .5
@@ -158,7 +183,8 @@ class FrameAnalyzer:
 
         if page is not None:
             x, y, bw, bh = cv2.boundingRect(page)
-            inside = [s for s in marks if x < s[0] < x+bw and y < s[1] < y+bh]
+            inside = [s for s in marks if cv2.pointPolygonTest(
+                page, (float(s[0]+s[2]/2), float(s[1]+s[3]/2)), False) > 0]
         elif marks:
             inside = marks
             x, y = min(s[0] for s in marks), min(s[1] for s in marks)
@@ -188,14 +214,28 @@ class FrameAnalyzer:
         if len(inside) < 2:
             return Assessment("search", "I have not found text yet. Aim at the page or lit phone screen. Move slowly.")
 
+        # Every readable assessment, including a framing warning, must pass
+        # focus first. A framing correction must never conceal blurry text.
+        detail = [cv2.Laplacian(patch, cv2.CV_64F).var() for patch in patches]
+        if detail and np.median(detail) < number(cfg, "ocr_guidance_min_sharpness", 1, 1000):
+            return Assessment("blur", "Text looks blurry. Hold still and keep the camera parallel to the page or screen.")
+
         margin = number(cfg, "ocr_guidance_edge_margin", .005, .1)
+        # A complete page outline inside the image rules out camera-edge
+        # clipping of that page. Background marks must not veto its capture.
+        complete_page = (page is not None and x > 2 and y > 2
+                         and x+bw < w-2 and y+bh < h-2)
+        # A margin is useful for positioning, but being near an edge does not
+        # mean a glyph is cut off. Require marks to touch the image boundary.
+        edge = max(1, min(2, int(min(w, h) * margin)))
         sides = {
-            "left": sum(s[0] <= w*margin for s in inside),
-            "right": sum(s[0]+s[2] >= w*(1-margin) for s in inside),
-            "top": sum(s[1] <= h*margin for s in inside),
-            "bottom": sum(s[1]+s[3] >= h*(1-margin) for s in inside),
+            "left": sum(s[0] <= edge for s in inside),
+            "right": sum(s[0]+s[2] >= w-edge for s in inside),
+            "top": sum(s[1] <= edge for s in inside),
+            "bottom": sum(s[1]+s[3] >= h-edge for s in inside),
         }
-        clipped = [side for side, count in sides.items() if count >= max(2, len(inside)*.06)]
+        clipped = [side for side, count in sides.items()
+                   if not complete_page and count >= max(3, len(inside)*.06)]
         if clipped:
             return Assessment("clipped", "Text may be cut off at the " + " and ".join(clipped) +
                               ". Move the camera a little farther away.", True)
@@ -207,11 +247,6 @@ class FrameAnalyzer:
             return Assessment(direction, movement_prompt(direction, dx, dy, w, h, page, cfg), True)
         if page is not None and max(bw/w, bh/h) < number(cfg, "ocr_guidance_min_fill", .2, .9):
             return Assessment("closer", "Text is too far away. Bring the camera a little closer.", True)
-        # Do not let a sharp phone bezel hide blurry letters. Measure around
-        # character-like marks, excluding the outer page/screen boundary.
-        detail = [cv2.Laplacian(patch, cv2.CV_64F).var() for patch in patches]
-        if detail and np.median(detail) < number(cfg, "ocr_guidance_min_sharpness", 1, 1000):
-            return Assessment("blur", "Text looks blurry. Hold still and keep the camera parallel to the page or screen.")
         return Assessment("ready", "Text is in position.", True)
 
 
@@ -219,6 +254,7 @@ class GuidanceGate:
     def __init__(self, config):
         self.required = int(number(config, "ocr_guidance_stable_frames", 2, 20))
         self.hold = number(config, "ocr_guidance_hold_seconds", .3, 5)
+        self.framing_grace = number(config, "ocr_guidance_framing_grace_s", 3, 30)
         self.interval = number(config, "ocr_guidance_prompt_interval_s", 1, 15)
         self.repeat = number(config, "ocr_guidance_repeat_interval_s", 5, 30)
         self.code = None
@@ -227,16 +263,31 @@ class GuidanceGate:
         self.last_spoken = -float("inf")
         self.last_code = None
         self.repeats = 0
+        self.readable_since = None
+        self.readable_count = 0
 
     def update(self, assessment, now):
+        if assessment.readable:
+            if self.readable_since is None:
+                self.readable_since = now
+            self.readable_count += 1
+        else:
+            self.readable_since = None
+            self.readable_count = 0
         if assessment.code == self.code:
             self.count += 1
         else:
             self.code, self.count, self.since = assessment.code, 1, now
         ready = (assessment.code == "ready" and self.count >= self.required
                  and now - self.since >= self.hold)
+        # Direction estimates can alternate even while usable text is steady.
+        # Give the user time to improve framing, then read the visible text.
+        # Darkness, motion, blur or missing text reset this window immediately.
+        if (assessment.readable and self.readable_count >= self.required
+                and now - self.readable_since >= self.framing_grace):
+            ready = True
         same = assessment.code == self.last_code
-        speak = (assessment.code != "ready" and self.count >= 2
+        speak = (not ready and assessment.code != "ready" and self.count >= 2
                  and now - self.last_spoken >= (self.repeat if same else self.interval)
                  and (not same or self.repeats < 3))
         if speak:
@@ -290,7 +341,11 @@ def guided_capture(camera, speak, stop_check, config):
             if stopped():
                 return None, "OCR scan cancelled."
             if ready:
-                speak("Text is in position. Hold still while I take the picture.")
+                if assessment.code == "ready":
+                    speak("Text is in position. Hold still while I take the picture.")
+                else:
+                    speak("I can see steady text, but I cannot confirm the whole page fits. "
+                          "Hold still. I will photograph the visible text now.")
                 if stopped():
                     return None, "OCR scan cancelled."
                 camera.stop_preview()
@@ -301,7 +356,9 @@ def guided_capture(camera, speak, stop_check, config):
                     return None, "OCR scan cancelled."
                 attempts -= 1
                 check = FrameAnalyzer(config).assess(frame) if frame is not None else None
-                if check and check.readable and check.code != "clipped":
+                if check and check.readable:
+                    if check.code == "clipped":
+                        speak("Some text at the edge may be missing from this picture.")
                     speak("Picture taken. You can relax your hand while I read.")
                     return frame, ""
                 if attempts <= 0:

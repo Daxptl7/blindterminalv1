@@ -6,6 +6,7 @@
   "ocr_guidance_stable_frames": 4,
   "ocr_guidance_repeat_interval_s": 10,
   "ocr_guidance_hold_seconds": 1.0,
+  "ocr_guidance_framing_grace_s": 8.0,
   "ocr_guidance_capture_attempts": 2,
   "ocr_guidance_rotation": 0,
   "ocr_guidance_mirror": false,

@@ -14,22 +14,33 @@ and announces this before reading. Preview guidance always runs locally.
 3. A stable view must remain in position for at least one second before capture.
    Corrections can repeat after ten seconds, up to three times per continuous
    instruction. Search/focus reminders include screen reflections and camera angle.
+   If only framing remains uncertain while sharp, steady text stays visible for
+   eight seconds, the scanner announces that it will capture the visible text.
+   Darkness, motion, blur or missing text resets this window.
 4. The device says to hold still while taking the photograph. It selects the
    sharpest of the configured stills and checks the final photograph. A blurry,
-   dark, clipped or unrecognized still gets one guided recapture by default.
+   dark or unrecognized still gets one guided recapture by default. Possible
+   edge clipping is announced, and the visible text is passed to the reader.
 5. “Picture taken” means the user can relax their hand. Online/local reading
    progress continues separately. The camera burst does not control upload time.
 6. Document playback and the optional explanation keep the existing privacy and
    button controls. Button 3's configured stop count cancels scanning.
 
-The previous ten-second forced capture is removed. A positioning timeout gives
-an actionable instruction and returns to the menu. No useful framing is inferred
-merely because time passed. The old `ocr_guidance_auto_capture_s` setting is ignored.
+There is no forced capture of dark, moving, blurry or unrecognized views. A
+positioning timeout gives an actionable instruction and returns to the menu.
+The framing grace period requires consecutive readable preview observations;
+elapsed time alone cannot trigger a capture. The old
+`ocr_guidance_auto_capture_s` setting is ignored.
 
 The analyzer uses page/screen bounds or visible character-like marks, supports
 both light and dark screen themes, and measures illumination in the target region
 instead of averaging a bright screen with its dark surroundings. Text-sized
 patches are used for sharpness so a sharp bezel cannot by itself certify focus.
+Character-like marks need a similar-sized neighbor on the same text line, and
+page membership uses the detected polygon rather than its enclosing rectangle.
+A few marks near an image edge no longer mean cut-off text: the warning requires
+several supported marks touching the outer image boundary. A fully visible page
+outline also prevents background marks from causing that warning.
 These are framing heuristics, not a guarantee of complete or accurate transcription.
 
 ## Gemini requests and fallback
@@ -116,6 +127,7 @@ Do not replace that file with an example. Environment keys `GEMINI_API_KEY` and
 | `ocr_gemini_model_name` | empty in code | OCR-specific model override; otherwise uses `gemini_model_name` |
 | `ocr_guidance_timeout_s` | 60 | Positioning window per capture attempt |
 | `ocr_guidance_hold_seconds` | 1.0 | Minimum stable time before capture |
+| `ocr_guidance_framing_grace_s` | 8.0 | Readable preview window before capturing despite uncertain framing |
 | `ocr_guidance_stable_frames` | 4 | Minimum consecutive ready observations |
 | `ocr_guidance_prompt_interval_s` | 3 | Minimum interval between different corrections |
 | `ocr_guidance_repeat_interval_s` | 10 | Reminder interval for a persistent correction |
