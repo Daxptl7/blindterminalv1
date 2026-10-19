@@ -145,6 +145,8 @@
   "voice_pre_buffer_ms": 300,
   "voice_retries": 1,
   "voice_beep": true,
+  "voice_mic_capture_percent": 50,
+  "voice_mic_auto_gain_enabled": false,
   "voice_normalize_target_dbfs": -20.0,
   "voice_normalize_max_gain": 20.0,
   "voice_recording_dir": "runtime/recordings",

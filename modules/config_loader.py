@@ -47,6 +47,10 @@ def validate_settings(data):
     for key in ("tts_rate", "voice_keep_recordings", "voice_stop_press_count"):
         if key in data and (isinstance(data[key], bool) or not isinstance(data[key], int)):
             raise SettingsError(f"{key} must be an integer")
+    if "voice_mic_capture_percent" in data:
+        value = data["voice_mic_capture_percent"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+            raise SettingsError("voice_mic_capture_percent must be an integer between 0 and 100")
     for key, low, high in (("tts_gain", 0.1, 4.0),
                            ("tts_playback_speed", 0.5, 2.0)):
         if key in data and (isinstance(data[key], bool)

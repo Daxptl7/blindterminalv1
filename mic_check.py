@@ -35,7 +35,7 @@ RECORD_SECONDS = 5
 SPEECH_MARGIN_DB = 8.0      # how far above its own noise floor a card must jump
 
 
-def list_devices():
+def list_devices(include_portaudio=False):
     print("ALSA capture cards (arecord -l):")
     try:
         print(subprocess.run(["arecord", "-l"], capture_output=True, text=True,
@@ -54,6 +54,10 @@ def list_devices():
     except (OSError, ValueError, AttributeError):
         pass
 
+    # Voice recording uses arecord. PortAudio enumeration is optional because
+    # probing unrelated ALSA/JACK routes can bury the actual measurements.
+    if not include_portaudio:
+        return
     print("\nPortAudio input devices (PyAudio):")
     try:
         import pyaudio
@@ -149,16 +153,23 @@ def test_device(device):
         return None
     level = _dbfs(loud)
     peak = int(np.max(np.abs(loud))) if loud.size else 0
+    clipped_percent = 100 * float(np.mean(np.abs(loud) >= 32760)) if loud.size else 0
+    overloaded = floor > -20 or clipped_percent >= 1.0
     jump = level - floor
     print(f"    while speaking: {level:.0f} dBFS (peak {peak}), "
           f"{jump:+.0f} dB above its own floor")
 
-    if jump >= SPEECH_MARGIN_DB:
-        print("    ✓ this card HEARS YOU")
+    hears = jump >= SPEECH_MARGIN_DB and not overloaded
+    if overloaded:
+        print(f"    ! input too loud for a reliable comparison; {clipped_percent:.1f}% of speaking samples near full scale")
+        print("      Reduce capture gain, disable automatic gain, and repeat.")
+    elif hears:
+        print("    ✓ this card reacted while you spoke; listen to a recording to confirm clear speech")
     else:
-        print("    ✗ no reaction — nothing is plugged into this card's mic input")
+        print("    ✗ no clear level increase; this does not prove the microphone is disconnected")
     return {"device": device, "floor": floor, "level": level,
-            "peak": peak, "jump": jump, "hears": jump >= SPEECH_MARGIN_DB}
+            "peak": peak, "jump": jump, "hears": hears,
+            "overloaded": overloaded, "clipped_percent": clipped_percent}
 
 
 def save_choice(device, speaker=None, earphone=None):
@@ -199,11 +210,12 @@ def main():
     options.add_argument("--select", metavar="DEVICE", help="save a listed capture route without recording")
     parser.add_argument("--speaker", metavar="DEVICE", help="with --select, also save the public playback route")
     parser.add_argument("--earphone", metavar="DEVICE", help="with --select, also save the private playback route")
+    parser.add_argument("--portaudio", action="store_true", help="also enumerate optional PyAudio devices")
     args = parser.parse_args()
     if (args.speaker is not None or args.earphone is not None) and not args.select:
         parser.error("--speaker and --earphone require --select")
     if args.list:
-        list_devices()
+        list_devices(include_portaudio=args.portaudio)
         return
     if args.select:
         devices = capture_cards()
@@ -221,7 +233,7 @@ def main():
                     return 1
         return 0 if save_choice(args.select, speaker=args.speaker, earphone=args.earphone) else 1
 
-    list_devices()
+    list_devices(include_portaudio=args.portaudio)
     devices = capture_cards()
     if not devices:
         print("\nNo capture cards found at all. Check the USB microphone is plugged in.")
@@ -233,17 +245,21 @@ def main():
 
     print("\n── RESULT ──")
     for r in results:
-        mark = "✓" if r["hears"] else "✗"
+        mark = "!" if r["overloaded"] else ("✓" if r["hears"] else "✗")
         print(f"  {mark} {r['device']:14} floor {r['floor']:>5.0f} dBFS  "
               f"speech {r['level']:>5.0f} dBFS  ({r['jump']:+.0f} dB)")
 
     hearing = [r for r in results if r["hears"]]
     if not hearing:
-        print("\nNo card reacted to your voice. Things to check, in order:")
-        print("  1. Is the microphone plugged into the USB dongle's PINK socket?")
-        print("  2. Raise the capture level:  amixer -c <card> sset Mic 100%")
-        print("  3. Unmute capture:           amixer -c <card> sset Mic cap")
-        print("  4. Try the headset on the other dongle.")
+        print("\nNo conclusive microphone selection; settings were not changed.")
+        for r in results:
+            if r["overloaded"]:
+                card = r["device"].split(":", 1)[1].split(",")[0]
+                print(f"  {r['device']} needs a lower input level. Start with:")
+                print(f"    amixer -c {card} sset 'Auto Gain Control' off")
+                print(f"    amixer -c {card} sset Mic capture 50% cap")
+        print("  Check the microphone plug/splitter, capture mute and capture level.")
+        print("  More gain is useful only when the microphone signal is quiet and not clipping.")
         return
 
     best = max(hearing, key=lambda r: r["jump"])
@@ -251,7 +267,7 @@ def main():
     if best["level"] < -30:
         print(f"  It is quiet ({best['level']:.0f} dBFS). Turn its capture up with:")
         card = best["device"].split(":")[1].split(",")[0]
-        print(f"    amixer -c {card} sset Mic 100%")
+        print(f"    amixer -c {card} sset Mic capture 5%+ cap")
     answer = input(f"Save mic_device = {best['device']} to settings.json? [Y/n] ").strip().lower()
     if answer in ("", "y", "yes"):
         save_choice(best["device"])
