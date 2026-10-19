@@ -162,25 +162,22 @@ _current_device = None
 try:
     import pygame
 
-    # gTTS returns 24 kHz MP3; matching the mixer rate avoids pitch-shifted
-    # ("chipmunk") playback that the old hardcoded 22050 Hz produced.
-    #
-    # buffer stays at 1024. Raising it to 4096 to widen the underrun margin
-    # silenced the default output entirely on the Pi — this mixer config is
-    # the one that demonstrably drives the speaker, so it is not tuned
-    # speculatively. Crackle on this path, if it ever appears, is a separate
-    # investigation; the creak that started all this was espeak, not this
-    # buffer. Override it in settings.json rather than editing this line.
-    _buffer = int(_static_settings.get("tts_mixer_buffer", 1024))
-    pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=_buffer)
+    # Importing TTS must not reserve the default ALSA card. Routed playback
+    # uses a separate process, which cannot open a card held by SDL's mixer.
+    # Open the mixer only for pygame playback and close it when that ends.
     PYGAME_AVAILABLE = True
     _current_device = "default"
-    logger.info(f"pygame.mixer initialised on default device "
-                f"(buffer={_buffer}, obtained={pygame.mixer.get_init()}).")
+    logger.info("pygame available; mixer will open only during default playback.")
 except ImportError:
     logger.info("pygame not installed — falling back to system audio players.")
 except Exception as e:
-    logger.warning(f"pygame mixer init failed: {e}")
+    logger.warning(f"pygame import failed: {e}")
+
+
+def _release_mixer():
+    """Release SDL's audio device before another player needs the hardware."""
+    if PYGAME_AVAILABLE and pygame.mixer.get_init():
+        pygame.mixer.quit()
 
 
 def _find_player(fmt: str):
@@ -606,6 +603,10 @@ class TTSManager:
             return False
         try:
             import io
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(
+                    frequency=24000, size=-16, channels=1,
+                    buffer=int(_static_settings.get("tts_mixer_buffer", 1024)))
             if fmt == "mp3":
                 # mixer.Sound cannot decode MP3 from a buffer — that is what
                 # made gTTS output unplayable. MP3 must go through mixer.music.
@@ -622,8 +623,11 @@ class TTSManager:
         except Exception as e:
             logger.warning(f"pygame playback failed ({e}); trying system player.")
             return False
+        finally:
+            _release_mixer()
 
     def _play_system(self, data: bytes, fmt: str) -> bool:
+        _release_mixer()
         binary, build_args = _find_player(fmt)
         if not binary:
             return False
@@ -668,6 +672,7 @@ class TTSManager:
         return False so the caller can decide, rather than playing the text out
         of the wrong speaker.
         """
+        _release_mixer()
         payload, play_fmt = data, fmt
         if fmt == "mp3" and not shutil.which("mpg123") and not shutil.which("mpg321"):
             decoded = _decode_mp3_to_wav(data)
@@ -724,6 +729,7 @@ class TTSManager:
         """Last audible resort: speak straight out of pyttsx3, no file involved."""
         if not self._engine_available:
             return False
+        _release_mixer()
         try:
             with self._engine_lock:
                 self._engine.setProperty("rate", self._current_rate)
