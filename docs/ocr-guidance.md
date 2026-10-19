@@ -23,8 +23,9 @@ and announces this before reading. Preview guidance always runs locally.
    edge clipping is announced, and the visible text is passed to the reader.
 5. “Picture taken” means the user can relax their hand. Online/local reading
    progress continues separately. The camera burst does not control upload time.
-6. Document playback and the optional explanation keep the existing privacy and
-   button controls. Button 3's configured stop count cancels scanning.
+6. Document playback and the optional explanation each ask for their own
+   earphone/speaker output after processing. Only that result uses the selected
+   output. Button 3's configured stop count cancels scanning.
 
 There is no forced capture of dark, moving, blurry or unrecognized views. A
 positioning timeout gives an actionable instruction and returns to the menu.

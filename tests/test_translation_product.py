@@ -181,30 +181,31 @@ class LanguageAwareVoiceTests(unittest.TestCase):
 
 
 class TranslationModeIntegrationTests(unittest.TestCase):
-    def test_private_choice_is_passed_to_translation(self):
+    def test_earphone_choice_does_not_force_translation_offline(self):
         main = importlib.import_module("main")
         translator = mock.Mock()
         translator.LANG_TO_TTS = {"en": "eng", "hi": "hin", "gu": "guj"}
         translator.translate_ex.return_value = SimpleNamespace(
             text="નમસ્તે", lang="gu", translated=True, source="mock", error=None
         )
-        privacy = mock.MagicMock()
-        privacy.ask_confidentiality.return_value = "PRIVATE"
+        privacy = importlib.import_module("modules.confidential_mode")
 
         with mock.patch.dict(main._modules, {
             "translator": translator,
             "privacy": privacy,
             "voice": mock.Mock(),
         }), \
-             mock.patch.object(main, "_select_with_buttons", side_effect=["1", "1", "3"]), \
-             mock.patch.object(main, "_listen_until_stopped", return_value="hello"), \
+             mock.patch.object(main, "_translation_choice", side_effect=["1", "1", "3", "1", "2", None]), \
+             mock.patch.object(main, "_translation_listen", return_value="hello"), \
+             mock.patch.object(privacy.tts, "require_private_output", return_value="earphone"), \
+             mock.patch.object(privacy, "PrivateAudio") as audio_context, \
              mock.patch.object(main, "_speak"):
             main.mode_translate()
 
         translator.translate_ex.assert_called_once_with(
-            "hello", from_lang="en", to_lang="gu", privacy=True
+            "hello", from_lang="en", to_lang="gu", privacy=False
         )
-        privacy.PrivateAudio.assert_called_once_with()
+        audio_context.assert_not_called()
 
 
 if __name__ == "__main__":

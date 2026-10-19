@@ -1,14 +1,21 @@
 # Live speech translation on Raspberry Pi
 
-Mode 4 → press Button 3 once for live conversation → select:
+Mode 4 → press Button 3 once and wait five seconds for live conversation → select:
 
 1. English ↔ Gujarati
 2. English ↔ Hindi
 3. Hindi ↔ Gujarati
 
 Wait for the spoken **Live translation ready** message. Speak one person at a
-time, pausing at the end of a sentence. Double press Button 3 or press Enter to
-stop. The interpreter translates questions rather than answering them.
+time, pausing at the end of a sentence. Press Button 3 three times within five
+seconds to leave Translate and return to the main menu. A single Button 3 press
+also waits five seconds in language-pair menus so it cannot consume an exit
+gesture. The interpreter translates questions rather than answering them.
+
+On a laptop, Enter ends the current live session. When a session ends without
+the exit gesture, Button 1 repeats using live input and Button 2 returns to the
+audio/Morse/live selector inside Translate. See [translation controls](pico-buttons.md)
+for the full repeat and exit behavior.
 
 ## Install on a Pi
 

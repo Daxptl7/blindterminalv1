@@ -197,7 +197,7 @@ NORMALIZE_TARGET_DBFS = float(_settings.get("voice_normalize_target_dbfs", -20.0
 NORMALIZE_MAX_GAIN = float(_settings.get("voice_normalize_max_gain", 20.0))
 SILENCE_DBFS = float(_settings.get("voice_silence_dbfs", -60.0))
 
-STT_ENGINES: List[str] = list(_settings.get("stt_engines", ["vosk", "google", "sphinx"]))
+STT_ENGINES: List[str] = list(_settings.get("stt_engines", ["google", "vosk", "sphinx"]))
 
 _abort = threading.Event()
 _last_error: Optional[str] = None
@@ -1143,9 +1143,8 @@ def play_with_privacy_prompt(path: Optional[str] = None,
                              timeout: Optional[float] = None) -> bool:
     """Ask on the speaker where to play the clip, then play it there.
 
-    Button 1 -> earphone (confidential). Button 2 -> speaker. No answer within
-    `timeout` -> speaker, because a device left waiting for an answer that is
-    not coming is worse than a default, and the user can always stop playback.
+    Button 1 -> earphone. Button 2 -> speaker. No answer cancels playback.
+    This choice applies to the clip only and does not select processing policy.
 
     The question is deliberately asked on the speaker even though the answer
     may route audio to the earphone: someone not already wearing the earphone
@@ -1157,14 +1156,14 @@ def play_with_privacy_prompt(path: Optional[str] = None,
         return False
 
     wait_s = float(timeout if timeout is not None else PRIVACY_PROMPT_TIMEOUT_S)
-    question = ("Is this confidential? Press button 1 to listen in the earphone, "
+    question = ("Your recording is ready. Press button 1 to listen in the earphone, "
                 "or button 2 to play it on the speaker.")
     _announce(question, SPEAKER_DEVICE, speak_fn)
 
     tty = sys.stdin is not None and sys.stdin.isatty()
     if tty:
         print(f"\n🔒 {question}")
-        print(f"   (or type 1 / 2 here — {wait_s:.0f}s, then the speaker)")
+        print(f"   (or type 1 / 2 here — {wait_s:.0f}s, then cancel)")
         # A key pressed before the question was asked is not an answer to it,
         # and a stale "2" would put confidential audio on the open speaker.
         _drain_stdin()
@@ -1277,17 +1276,23 @@ def _transcribe_sphinx(pcm: bytes) -> Optional[str]:
 
 
 def _run_engines(pcm: bytes, lang: str) -> Optional[str]:
-    for name in STT_ENGINES:
+    # Upgrade existing local-first settings to the automatic online/local flow.
+    for name in sorted(STT_ENGINES, key=lambda engine: engine != "google"):
         if not _engine_available(name, lang):
             continue                       # skip, rather than pretend to try
-        if name == "vosk":
-            result = _transcribe_vosk(pcm, lang)
-        elif name == "google":
-            result = _transcribe_google(pcm, lang)
-        elif name == "sphinx":
-            result = _transcribe_sphinx(pcm)
-        else:
-            logger.warning(f"Unknown STT engine configured: {name}")
+        try:
+            if name == "vosk":
+                result = _transcribe_vosk(pcm, lang)
+            elif name == "google":
+                result = _transcribe_google(pcm, lang)
+            elif name == "sphinx":
+                result = _transcribe_sphinx(pcm)
+            else:
+                logger.warning(f"Unknown STT engine configured: {name}")
+                continue
+        except Exception as error:
+            logger.warning("%s recognition failed (%s); trying the next engine.",
+                           name, type(error).__name__)
             continue
         if result:
             return result
@@ -1351,7 +1356,9 @@ def transcribe_file(path: str, lang: str = "en-IN") -> Optional[str]:
 def listen(lang: str = "en-IN", speak_fn: Optional[Callable] = None,
            max_seconds: Optional[float] = None,
            stop_check: Optional[Callable[[], bool]] = None,
-           manual_stop: bool = True) -> Optional[str]:
+           manual_stop: bool = True,
+           cancel_check: Optional[Callable[[], bool]] = None,
+           process_fn: Optional[Callable] = None) -> Optional[str]:
     """Record until the user stops it, save to the pen drive, transcribe.
 
     The signature matches v4 so main.py keeps working unchanged, but there is
@@ -1363,9 +1370,19 @@ def listen(lang: str = "en-IN", speak_fn: Optional[Callable] = None,
     the AI does not need playing back, and the privacy prompt would sit between
     the user and their answer. Call play_with_privacy_prompt() when review is
     what is wanted.
+
+    cancel_check distinguishes leaving a mode from finishing a recording and
+    skips speech recognition when the recording ended because of a mode exit.
+    process_fn can run transcription with cancellation after capture has closed.
     """
     path = record(stop_check=stop_check, max_seconds=max_seconds, speak_fn=speak_fn)
     if not path:
+        return None
+
+    # A mode-exit gesture stops capture without submitting it for recognition.
+    if cancel_check and cancel_check():
+        if not current_policy().allow_persistence:
+            clear_private_recordings()
         return None
 
     if not _active_engines(lang):
@@ -1380,7 +1397,8 @@ def listen(lang: str = "en-IN", speak_fn: Optional[Callable] = None,
         return None
 
     try:
-        text = transcribe_file(path, lang)
+        operation = lambda: transcribe_file(path, lang)
+        text = process_fn(operation) if process_fn else operation()
     finally:
         if not current_policy().allow_persistence:
             clear_private_recordings()

@@ -9,9 +9,9 @@ class PrivacyButtonTests(unittest.TestCase):
     def setUp(self):
         self.serial = mock.Mock()
         self.serial.get_message.return_value = None
-        self.audio_patch = mock.patch.object(privacy, 'PrivateAudio')
-        self.audio = self.audio_patch.start()
         self.speak = mock.patch.object(privacy.tts, 'speak').start()
+        self.routed = mock.patch.object(privacy.tts, 'speak_on_device').start()
+        mock.patch.object(privacy.tts, 'require_private_output', return_value='earphone').start()
         self.addCleanup(mock.patch.stopall)
 
     def test_buttons_choose_private_or_speaker(self):
@@ -26,9 +26,8 @@ class PrivacyButtonTests(unittest.TestCase):
             self.assertEqual(privacy.ask_confidentiality(self.serial), 'NORMAL')
         speaker.assert_called_once_with()
 
-    def test_selected_route_is_used_for_follow_up_audio(self):
+    def test_each_result_uses_its_selected_route_without_switching_the_flow(self):
         self.serial.wait_for_raw_button.side_effect = [1, 2]
-        self.audio_patch.stop()
         with mock.patch.object(privacy, 'enable_earphone') as earphone, \
                 mock.patch.object(privacy, 'enable_speaker') as speaker:
             self.assertEqual(
@@ -39,8 +38,10 @@ class PrivacyButtonTests(unittest.TestCase):
                 privacy.speak_with_privacy_check('public text', 'eng', self.serial),
                 'NORMAL',
             )
-        self.assertGreaterEqual(earphone.call_count, 1)
+        earphone.assert_not_called()
         self.assertGreaterEqual(speaker.call_count, 2)
+        self.assertEqual(self.routed.call_args_list[0].args[:2], ('private text', 'earphone'))
+        self.assertEqual(self.routed.call_args_list[1].args[:2], ('public text', privacy.tts.SPEAKER_DEVICE))
 
     def test_press_during_prompt_is_preserved(self):
         queue = []
@@ -84,7 +85,7 @@ class ExplanationButtonTests(unittest.TestCase):
         from modules.privacy_policy import current_policy
         scope = dict(current_policy=current_policy, time=time, logger=mock.Mock(), _modules={'ocr':ocr, 'ai_query':ai},
                      _has=lambda name: name in ('ocr', 'ai_query'), _speak=mock.Mock(),
-                     _flush_speech=mock.Mock(), _morse_serial_singleton=serial,
+                     _flush_speech=mock.Mock(), _deliver_result=mock.Mock(), _morse_serial_singleton=serial,
                      _button3_stop_signal=lambda: (None, mock.Mock()),
                      _BUTTON_CHOICE_TIMEOUT_S=15, _BUTTON_DOUBLE_WINDOW_S=2,
                      _keyboard_input=mock.Mock(return_value=None))

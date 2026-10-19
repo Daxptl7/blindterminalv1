@@ -3,7 +3,7 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 from unittest.mock import patch
 
 from modules import live_translator
@@ -358,14 +358,14 @@ class LiveMenuTests(unittest.TestCase):
         interpreter.run_live.side_effect = live_translator.LiveTranslationError("Check the USB speaker.")
         cancel = Mock()
         with patch.dict(main._modules,{"translator":Mock(),"live_translator":live_module}), \
-                patch.object(main,"_select_with_buttons",side_effect=["3","3"]), \
+                patch.object(main,"_translation_choice",side_effect=["3","3","2",None]), \
                 patch.object(main,"_button3_stop_signal",return_value=(lambda:False,cancel)), \
-                patch.object(main,"_settle_button_input"), \
+                patch.object(main,"_translation_prepare"), \
                 patch.object(main,"_speak") as speak:
             main.mode_translate()
         live_module.LiveTranslator.assert_called_once_with(lang_pair="hi-gu")
-        speak.assert_any_call("Check the USB speaker.",block=True)
-        cancel.assert_called_once()
+        speak.assert_any_call("Check the USB speaker.",block=True,stop_check=ANY)
+        cancel.assert_not_called()
 
 
 class LiveSpeechBoundaryTests(unittest.TestCase):

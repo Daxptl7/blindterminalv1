@@ -1,9 +1,11 @@
 # Local-language translation setup
 
 BlindAssist now exposes all six English, Hindi, and Gujarati directions. The
-provider order is offline-first: IndicTrans2, Argos, trusted/local Libre, then
-the cloud providers. A private request never uses a cloud service or the
-persistent text cache.
+provider order tries cloud services first, then installed local engines and the
+offline phrasebook. There is no online/offline question at mode entry. Earphones
+or speaker are chosen only after the result exists and only for that result.
+Explicit private API requests still exclude cloud services and persistent cache;
+the user-facing earphone choice does not create such a processing session.
 
 For real-time speech interpretation, follow
 [live translation setup](LIVE_TRANSLATION_SETUP.md). It has its own Gemini
@@ -15,11 +17,15 @@ Inside Mode 4, press one physical button once:
 
 - Button 1: speak a phrase. Choose source and target languages before recording.
 - Button 2: enter English text using the Morse buttons.
-- Button 3: start live conversation after choosing a language pair.
+- Button 3 once, then wait five seconds: choose a live conversation language pair.
 
 There is no typed-text option or fourth button. Voice/Morse language menus use
 1 for English, 2 for Hindi and 3 for Gujarati. Finish a phrase recording with
-three Button 3 presses; stop a live conversation with two Button 3 presses.
+one Button 3 press followed by five seconds. Three consecutive Button 3 presses
+within five seconds leave Translate, including during live conversation.
+After a phrase translation is processed, select earphones or speaker, then answer
+the repeat question: Button 1 repeats the same input method; Button 2 returns to
+the audio/Morse/live selector. See [button controls](pico-buttons.md).
 Each new menu lets the previous press settle before listening, then preserves
 choices made during the spoken prompt. Delayed events from the previous choice
 are cleared between menus. The log reports the input method actually selected.
@@ -85,8 +91,8 @@ models_local/vosk/gu
 ```
 
 The code will not feed Hindi or Gujarati audio into an English offline model.
-If a requested local model is absent it uses the configured online recognizer
-or reports that the language is unavailable. Install `espeak-ng` on Raspberry
+The online recognizer is tried first; local models are the automatic fallback.
+If neither is available, the app reports that recognition failed. Install `espeak-ng` on Raspberry
 Pi OS so offline Hindi/Gujarati translation can also be spoken offline.
 
 ## Raspberry Pi phase

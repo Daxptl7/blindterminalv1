@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from modules.privacy_policy import current_policy, session_active, session_thread
+from modules.privacy_policy import current_policy, session_thread
 
 load_dotenv()
 
@@ -136,7 +136,7 @@ OPENAI_TIMEOUT_S = float(_settings.get("openai_timeout_s", 8.0))
 GEMINI_TIMEOUT_S = float(_settings.get("gemini_timeout_s", 10.0))
 RACE_TIMEOUT_S = float(_settings.get("ai_race_timeout_s", 10.0))
 
-# How long the "is this confidential?" question waits before defaulting.
+# How long the result-output question waits before cancelling playback.
 _privacy_settings = _settings.get("privacy")
 PRIVACY_TIMEOUT_S = float(
     _privacy_settings.get("answer_route_timeout_seconds", 20.0)
@@ -451,13 +451,6 @@ def deliver_answer(answer: str, speak_fn: Optional[Callable] = None,
     if not answer:
         return "none"
 
-    if session_active():
-        if speak_fn:
-            speak_fn(answer, block=True)
-            return "earphone" if current_policy().private else "speaker"
-        return ("earphone" if current_policy().private else "speaker") if _say_on_device(
-            answer, _earphone_device() if current_policy().private else _speaker_device()) else "none"
-
     wait_s = float(privacy_timeout if privacy_timeout is not None
                    else PRIVACY_TIMEOUT_S)
     speaker = _speaker_device()
@@ -466,7 +459,7 @@ def deliver_answer(answer: str, speak_fn: Optional[Callable] = None,
     if not speaker and not earphone:
         return "none"
 
-    question = ("Your answer is ready. Is this confidential? "
+    question = ("Your answer is ready. "
                 "Press button 1 to hear it in the earphone, "
                 "or button 2 to hear it on the speaker.")
     _say_on_device(question, speaker, speak_fn)
@@ -484,9 +477,9 @@ def deliver_answer(answer: str, speak_fn: Optional[Callable] = None,
             return "none"
         device, where = earphone, "earphone"
     else:
-        device, where = speaker or earphone, "speaker"
-        if choice is None:
-            logger.info(f"No answer in {wait_s:.0f}s — using the speaker.")
+        if not speaker:
+            return "none"
+        device, where = speaker, "speaker"
 
     logger.info(f"Delivering the answer on the {where} ({device}).")
     return where if _say_on_device(answer, device, speak_fn) else "none"
@@ -756,15 +749,24 @@ def ask_ai(prompt: str, context: str = "", simplify: bool = False,
             if remaining <= 0:
                 break
             provider_timeout = DETAILED_TIMEOUT_S if detailed else GROQ_TIMEOUT_S
-            result = provider(full_prompt, simplify, timeout=min(remaining, provider_timeout),
-                              detailed=detailed)
+            try:
+                result = provider(full_prompt, simplify, timeout=min(remaining, provider_timeout),
+                                  detailed=detailed)
+            except Exception as error:
+                logger.warning("%s unavailable (%s); trying the next provider.",
+                               source, type(error).__name__)
+                result = None
             if result:
                 logger.info("Answer from %s", source)
                 return result
 
         # Phase 2 — Gemini.
-        result = _ask_gemini(full_prompt, simplify, detailed=detailed,
-                             timeout=DETAILED_TIMEOUT_S if detailed else GEMINI_TIMEOUT_S)
+        try:
+            result = _ask_gemini(full_prompt, simplify, detailed=detailed,
+                                 timeout=DETAILED_TIMEOUT_S if detailed else GEMINI_TIMEOUT_S)
+        except Exception as error:
+            logger.warning("Gemini unavailable (%s); trying the offline tutor.", type(error).__name__)
+            result = None
         if result:
             logger.info("Answer from gemini")
             return result

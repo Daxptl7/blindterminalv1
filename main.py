@@ -10,7 +10,7 @@ from logging.handlers import RotatingFileHandler
 import json
 import threading
 import time
-from modules.privacy_policy import PRIVATE, PUBLIC, current_policy, processing_session
+from modules.privacy_policy import PUBLIC, current_policy, processing_session
 
 from pathlib import Path
 
@@ -138,7 +138,7 @@ for configured_logger in [logging.getLogger(), *[
 def _has(mod_name):
     return _modules.get(mod_name) is not None
 
-def _speak(text, block=False, lang="eng", stop_check=None):
+def _speak(text, block=False, lang="eng", stop_check=None, device=None):
     """Safe TTS — works even if tts module failed to load.
 
     `lang` picks the voice. It matters for exactly one thing today — reading a
@@ -150,10 +150,33 @@ def _speak(text, block=False, lang="eng", stop_check=None):
         options = {"lang": lang, "block": block or current_policy().private}
         if stop_check is not None:
             options["stop_check"] = stop_check
+        if device is not None:
+            return _modules["tts"].speak_on_device(text, device, **options)
         return _modules["tts"].speak(text, **options)
     else:
         if not current_policy().private:
             print(f"[TTS OFFLINE] {text}")
+
+
+def _deliver_result(text, lang="eng", *, serial=None, choose_output=None,
+                    stop_check=None, before_play=None):
+    """Ask where to hear a completed result without changing the next prompt."""
+    if not text:
+        return None
+    if not _has("privacy"):
+        _speak("Audio output selection is unavailable. The result was not spoken.")
+        return None
+    try:
+        return _modules["privacy"].speak_document_with_privacy_check(
+            text, lang, _morse_serial_singleton if serial is None else serial,
+            speak_fn=_speak, choose_output=choose_output, stop_check=stop_check,
+            before_play=before_play)
+    except Exception as error:
+        if stop_check and stop_check():
+            raise
+        logger.warning("Result playback failed (%s).", type(error).__name__)
+        _speak("The selected audio output is unavailable. The result was not spoken.")
+        return None
 
 
 def _flush_speech():
@@ -458,18 +481,7 @@ def mode_ocr_scan():
                        "screen and tilt it away from reflections. Select scan to try again.")
             return
 
-        # —— PRIVACY ROUTING (FIX 1 & FIX 2) ——————————————————
-        # The original code called ask_privacy() but never passed the morse
-        # serial handle, then ALWAYS called _speak() afterwards — meaning the
-        # text was read aloud through the speaker regardless of what the user
-        # chose. This block replaces both the broken privacy call and the
-        # broken "explain this?" response listener.
-        #
-        # speak_document_with_privacy_check() does three things atomically:
-        #   1. Asks "confidential or normal?" through the main speaker
-        #   2. Waits for Button 1 (private) or Button 2 (speaker) only
-        #   3. Routes the spoken text to ONLY the correct audio path
-        # Nothing is read aloud before the user makes their choice.
+        # The page is processed before asking where to hear this result.
         try:
             from modules import confidential_mode as _cm
             # Safely resolve the morse serial handle -- supports both variable
@@ -482,9 +494,9 @@ def mode_ocr_scan():
             # Never leak recognized document text to the public speaker when
             # privacy routing fails.  The user can safely retry after checking
             # the earphones/audio devices.
-            logger.error(f"OCR privacy reader failed: {e}")
+            logger.error(f"OCR result playback failed: {e}")
             _speak(
-                "I read the page, but private audio routing is unavailable. "
+                "I read the page, but the selected audio output is unavailable. "
                 "The document was not spoken. Please check the audio devices "
                 "and try again."
             )
@@ -493,7 +505,7 @@ def mode_ocr_scan():
         logger.info("OCR completed (%s characters).", len(text))
 
         # Index into RAG vector store for semantic retrieval
-        if (current_policy().allow_persistence and document_mode != "PRIVATE"
+        if (current_policy().allow_persistence
                 and _has("ai_query") and hasattr(_modules["ai_query"], "index_text_in_rag")):
             if _modules["ai_query"].index_text_in_rag(text):
                 logger.info("OCR text indexed into RAG vector store.")
@@ -507,13 +519,10 @@ def mode_ocr_scan():
         if response == "1":
             _speak("Analyzing...")
             if _has("ai_query"):
-                from contextlib import nullcontext
-                # Inherit the document route even for direct mode callers.
-                with (_cm.PrivateAudio() if document_mode == "PRIVATE" else nullcontext()):
-                    answer = _ask_ai_cancellable(
-                        "Explain this in simple terms for a visually impaired student:",
-                        context=text, speak_fn=_speak, flush_fn=_flush_speech)
-                    _speak(answer)
+                answer = _ask_ai_cancellable(
+                    "Explain this in simple terms for a visually impaired student:",
+                    context=text, speak_fn=_speak, flush_fn=_flush_speech)
+                _deliver_result(answer)
             else:
                 _speak("AI module is not available.")
 
@@ -607,13 +616,12 @@ def mode_morse_type():
         answer = _ask_ai_cancellable(
             question, speak_fn=_speak, flush_fn=_flush_speech
         )
-        _speak(answer)
+        _deliver_result(answer)
     else:
         _speak("AI module is not available.")
 
 def _speak_voice_answer(answer):
     """Read an answer; return True when Button 1 requests an early follow-up."""
-    from modules.confidential_mode import split_text_for_speech
 
     serial = _morse_serial_singleton
     interrupted = False
@@ -631,22 +639,17 @@ def _speak_voice_answer(answer):
             interrupted = True
         return interrupted
 
-    # The AI-processing watcher has already stopped. This caller is the only
-    # button consumer while speech plays, and stops reading before recording.
-    _drain_button_messages()
-    for chunk in split_text_for_speech(answer):
-        try:
-            if serial is None:
-                _speak(chunk, block=True)
-            else:
-                _speak(chunk, block=True, stop_check=follow_up_requested)
-        except Exception:
-            if not interrupted:
-                raise
-        if interrupted:
-            logger.info("Voice answer interrupted by Button 1 for a follow-up.")
-            return True
-    return False
+    # Select the output after processing. Clear the selection press before
+    # arming Button 1 as a playback interrupt for the next question.
+    try:
+        _deliver_result(answer, stop_check=follow_up_requested if serial is not None else None,
+                        before_play=_drain_button_messages)
+    except Exception:
+        if not interrupted:
+            raise
+    if interrupted:
+        logger.info("Voice answer interrupted by Button 1 for a follow-up.")
+    return interrupted
 
 
 def mode_voice_ask():
@@ -661,8 +664,7 @@ def mode_voice_ask():
         _speak("AI module is not available.")
         return
 
-    # Keep bounded conversation text only for this invocation. The surrounding
-    # run_mode() privacy session and output route stay active for every turn.
+    # Each answer gets a fresh output choice. Prompts remain on the speaker.
     conversation = ""
     while True:
         prompt = ("Ask your follow-up question now." if conversation
@@ -839,66 +841,148 @@ def _select_with_buttons(valid: tuple, prompt: str,
     return typed if typed in valid else None
 
 
+def _translation_speak(buttons, text, **kwargs):
+    buttons.check_exit()
+    try:
+        return _speak(text, stop_check=buttons.exited.is_set, **kwargs)
+    finally:
+        # TTS raises SpeechCancelled when stop_check fires. Convert that to
+        # the session's exit request instead of reporting a runtime failure.
+        buttons.check_exit()
+
+
+def _translation_prepare(buttons):
+    if buttons.serial is not None:
+        # Let firmware finish the preceding menu press's decoded letter.
+        time.sleep(_BUTTON_LETTER_SETTLE_S)
+    buttons.clear()
+
+
+def _translation_choice(buttons, prompt, valid=("1", "2", "3")):
+    _translation_prepare(buttons)
+    _translation_speak(buttons, prompt, block=True)
+    if buttons.serial is None:
+        while True:
+            choice = _keyboard_input("Choice (333=main menu): ", default=None)
+            if choice is None:
+                return None
+            choice = choice.strip()
+            if choice == "333":
+                buttons.exited.set()
+                buttons.check_exit()
+            if choice in valid:
+                return choice
+            _translation_speak(buttons, "Please choose one of the announced options.", block=True)
+    while True:
+        choice = buttons.wait_for_raw_button(timeout=_BUTTON_CHOICE_TIMEOUT_S)
+        if choice is None:
+            # Stay in Translate while waiting; only the exit gesture leaves it.
+            _translation_speak(buttons, "Please choose an option, or press button 3 three times to leave translation.", block=True)
+        elif str(choice) in valid:
+            return str(choice)
+
+
+def _translation_process(buttons, operation):
+    from modules.processing_feedback import run_with_feedback, ProcessingCancelled
+    try:
+        result = run_with_feedback(operation,
+                                   lambda text: _translation_speak(buttons, text),
+                                   buttons.exited.is_set)
+        buttons.check_exit()
+        return result
+    except ProcessingCancelled:
+        buttons.check_exit()
+    except TimeoutError:
+        _translation_speak(buttons, "Processing timed out. Please try again.", block=True)
+
+
+def _translation_listen(buttons, lang, prompt=None):
+    _translation_prepare(buttons)
+    _translation_speak(buttons, prompt or "Speak your text now.", block=True)
+    if buttons.serial is not None:
+        _translation_speak(buttons,
+            "Press button 3 once, then wait five seconds to finish recording. "
+            "Press button 3 three times to leave translation.", block=True)
+    else:
+        _translation_speak(buttons, "Press Enter when you are finished.", block=True)
+    # Button 3's single action is delayed, so it cannot submit a recording
+    # before the user has finished the three-click exit gesture.
+    try:
+        return _modules["voice"].listen(
+            lang, stop_check=buttons.recording_stopped if buttons.serial is not None else None,
+            manual_stop=True, cancel_check=buttons.exited.is_set,
+            process_fn=lambda operation: _translation_process(buttons, operation))
+    except Exception as error:
+        buttons.check_exit()
+        logger.warning("Translation voice capture failed (%s).", type(error).__name__)
+        return None
+    finally:
+        buttons.check_exit()
+
+
 def mode_translate():
-    """
-    Mode 4: Translate text.
-
-    Step 1 — select input with one press (1=voice, 2=Morse, 3=live)
-    Step 2 — get the text using that method
-    Step 3 — choose source and target from English, Hindi and Gujarati
-    Step 4 — translate and speak the result
-
-    Both menus are answered with the three physical buttons only. Source and
-    target are separate choices, so all six directions are reachable without
-    timing-sensitive double presses.
-    """
+    """Keep Mode 4 open until its three-click exit gesture is requested."""
+    from modules.translation_controls import TranslationButtons, TranslationExited
     logger.info("Mode 4: Translate")
-
     if not _has("translator"):
         _speak("Translation module is not available.")
         return
 
-    def _translation_choice(prompt):
-        # Let the previous press finish producing its raw/decoded events
-        # before announcing a new menu. Preserve choices made during speech.
-        _settle_button_input()
-        return _select_with_buttons(("1", "2", "3"), prompt)
+    with TranslationButtons(_morse_serial_singleton) as buttons:
+        try:
+            while True:
+                print("\n[Mode 4 — Translate]  1=Voice  2=Morse  3=Live (wait 5 seconds)  333=Main menu")
+                choice = _translation_choice(buttons,
+                    "Translation mode. Press button 1 for audio, or button 2 for Morse. "
+                    "Press button 3 once and wait five seconds for live conversation. "
+                    "Press button 3 three times within five seconds to return to the main menu.")
+                input_method = {"1": "voice", "2": "morse", "3": "live"}.get(choice)
+                if input_method is None:
+                    # A terminal EOF cannot be retried usefully.
+                    return
+                while True:
+                    _translate_once(input_method, buttons)
+                    buttons.check_exit()
+                    repeat = _translation_choice(buttons,
+                        "Would you like another translation using the same input method? "
+                        "Press button 1 for yes, or button 2 to choose audio, Morse, or live. "
+                        "Press button 3 three times to return to the main menu.",
+                        valid=("1", "2"))
+                    if repeat != "1":
+                        break
+        except TranslationExited:
+            _flush_speech()
+            _speak("Leaving translation. Returning to the main menu.", block=True)
 
-    # ── STEP 1: Choose input method ───────────────────────────────────────
-    print("\n[Mode 4 — Translate]  input method")
-    print("  Button 1 → Voice / microphone (single phrase)")
-    print("  Button 2 → Morse code buttons")
-    print("  Button 3 → Live real-time conversation")
 
-    input_choice = _translation_choice(
-        "Translation mode. Press one button once. "
-        "Press button 1 to speak a single phrase. "
-        "Press button 2 to enter it in Morse code. "
-        "Press button 3 for real-time live conversation."
-    )
+def _translate_once(input_method, buttons):
+    """Run one translation attempt without leaving the Mode 4 session."""
+    # Use the session's single serial consumer for every stage, including
+    # privacy choices and Morse entry; no competing button watchers run here.
+    def speak(text, **kwargs):
+        return _translation_speak(buttons, text, **kwargs)
 
-    input_method = {"1": "voice", "2": "morse", "3": "live"}.get(input_choice)
-    if input_method is None:
-        _speak("No button was pressed. Translation cancelled.")
-        return
-    logger.info("Translation input selected: %s (button %s).", input_method, input_choice)
+    def choose(prompt):
+        return _translation_choice(buttons, prompt)
+
+    serial = buttons if buttons.serial is not None else None
 
     # ── REAL-TIME LIVE CONVERSATION OPTION ──────────────────────────────
     if input_method == "live":
         if not _has("live_translator"):
-            _speak("Real-time live translation module is not available.")
+            speak("Real-time live translation module is not available.")
             return
 
         print("\n[Live Translation] Select Language Pair:")
         print("  Button 1 → English <-> Gujarati")
         print("  Button 2 → English <-> Hindi")
         print("  Button 3 → Hindi <-> Gujarati")
-        pair_choice = _translation_choice(
+        pair_choice = choose(
             "Live conversation mode. Press button 1 for English and Gujarati, "
             "button 2 for English and Hindi, or button 3 for Hindi and Gujarati."
         )
         if pair_choice not in ("1", "2", "3"):
-            _speak("No language pair selected. Live translation cancelled.")
+            speak("No language pair selected. Live translation cancelled.")
             return
 
         pair, pair_name = {
@@ -907,34 +991,28 @@ def mode_translate():
             "3": ("hi-gu", "Hindi and Gujarati"),
         }[pair_choice]
 
-        _speak(
+        speak(
             f"Connecting live conversation interpreter for {pair_name}. Please wait. "
-            "Double-press button 3 or press Enter to stop.",
+            "Press button 3 three times to leave translation, or press Enter to end this conversation.",
             block=True
         )
 
-        # Live mode has its own control: a double Button-3 press ends the
-        # conversation. Do not use the voice-recording three-press rule here.
-        _settle_button_input()
-        stop_check, cancel_stop = _button3_stop_signal(
-            required_presses=2, confirm_stops=True
-        )
+        _translation_prepare(buttons)
+        live_mod = _modules["live_translator"]
         try:
-            live_mod = _modules["live_translator"]
             interpreter = live_mod.LiveTranslator(lang_pair=pair)
             interpreter.run_live(
-                stop_check=stop_check,
-                status_fn=lambda message: _speak(message, block=True),
+                stop_check=buttons.exited.is_set,
+                status_fn=lambda message: speak(message, block=True),
             )
         except Exception as e:
+            buttons.check_exit()
             logger.error("Live translation runtime error (%s).", type(e).__name__)
             if isinstance(e, getattr(live_mod, "LiveTranslationError", ())):
-                _speak(str(e), block=True)
+                speak(str(e), block=True)
             else:
-                _speak("Live translation could not start. Check the live audio setup and internet connection.", block=True)
-        finally:
-            cancel_stop()
-        _speak("Live conversation ended. Returning to menu.")
+                speak("Live translation could not start. Check the live audio setup and internet connection.", block=True)
+        speak("Live conversation ended.")
         return
 
     languages = {
@@ -951,7 +1029,7 @@ def mode_translate():
 
     def _choose_translation_direction() -> tuple[str, str] | None:
         print("\n  Source language: 1=English, 2=Hindi, 3=Gujarati")
-        source_choice = _translation_choice(
+        source_choice = choose(
             "Choose the source language. Press button 1 for English, "
             "button 2 for Hindi, or button 3 for Gujarati."
         )
@@ -959,9 +1037,9 @@ def mode_translate():
             return None
 
         src, source_name = languages[source_choice]
-        _speak(f"Source language: {source_name}.", block=True)
+        speak(f"Source language: {source_name}.", block=True)
         print("  Target language: 1=English, 2=Hindi, 3=Gujarati")
-        target_choice = _translation_choice(
+        target_choice = choose(
             "Choose the target language. Press button 1 for English, "
             "button 2 for Hindi, or button 3 for Gujarati."
         )
@@ -970,11 +1048,11 @@ def mode_translate():
 
         dest, target_name = languages[target_choice]
         if src == dest:
-            _speak(
+            speak(
                 "Source and target cannot be the same. Translation cancelled."
             )
             return None
-        _speak(f"Target language: {target_name}.", block=True)
+        speak(f"Target language: {target_name}.", block=True)
         return src, dest
 
     # ── STEP 2: Get the source text ───────────────────────────────────────
@@ -983,27 +1061,29 @@ def mode_translate():
 
     if input_method == "morse":
         # ── Morse code via Pico W buttons ──
-        if _morse_serial_singleton is None and not _has("morse"):
-            _speak("Morse input is not available. Please choose voice input instead.")
+        if serial is None and not _has("morse"):
+            speak("Morse input is not available. Please choose voice input instead.")
             return
 
         # Remove the selection's delayed Morse letter before asking for text.
         # Draining after this prompt used to discard text entered during it.
-        _settle_button_input()
-        _speak(
+        _translation_prepare(buttons)
+        speak(
             "Morse input mode. "
             "Tap Button 1 for dot and Button 2 for dash. "
             "Pause 1.5 seconds to finish a letter. "
-            "Double-press Button 3 to confirm the full word and send it.",
+            "Double-press button 3, then wait five seconds to send your text. "
+            "Press button 3 three times to leave translation.",
             block=True
         )
 
         # Use MorseSerial if Pico W is connected, else fall back to keyboard Morse
-        if _morse_serial_singleton is not None:
+        if serial is not None:
             try:
-                typed = _morse_serial_singleton.type_word(timeout=60)
+                typed = serial.type_word(timeout=60)
                 text = typed.strip() if typed else None
             except Exception as e:
+                buttons.check_exit()
                 logger.warning(f"Morse serial read failed: {e}")
                 text = None
         else:
@@ -1013,29 +1093,29 @@ def mode_translate():
             print("  Words:   separate with  /     (e.g. .... . / .-- --- .-. .-.. -..)\n")
             raw_morse = _keyboard_input("Morse: ", default=None)
             if raw_morse is None:
-                _speak("No input received.")
+                speak("No input received.")
                 return
             if not raw_morse:
-                _speak("No Morse code entered.")
+                speak("No Morse code entered.")
                 return
             if not all(c in ".- / " for c in raw_morse):
-                _speak("That does not look like Morse code. Use dots, dashes, spaces and slashes only.")
+                speak("That does not look like Morse code. Use dots, dashes, spaces and slashes only.")
                 return
             text = _decode_morse_input(raw_morse)
 
         if not text or text.replace("?", "").strip() == "":
-            _speak("Could not decode the Morse input. Please try again.")
+            speak("Could not decode the Morse input. Please try again.")
             return
 
         # Do not read the captured text over the public speaker before the
         # user has chosen a privacy route. The decoded content may be private.
-        _speak("Morse text decoded.")
+        speak("Morse text decoded.")
         logger.info("Translate — Morse input decoded successfully.")
 
     elif input_method == "voice":
         # ── Voice / microphone ──
         if not _has("voice"):
-            _speak("Voice input is not available. Please choose Morse input instead.")
+            speak("Voice input is not available. Please choose Morse input instead.")
             return
 
         # Voice recognition needs the source language before recording starts.
@@ -1044,22 +1124,22 @@ def mode_translate():
         # as nonsense.
         direction_choice = _choose_translation_direction()
         if direction_choice is None:
-            _speak("No valid direction selected. Translation cancelled.")
+            speak("No valid direction selected. Translation cancelled.")
             return
 
         src, _dest = direction_choice
         listen_lang = speech_langs.get(src, "en-IN")
-        text = _listen_until_stopped(listen_lang, prompt="Speak your text now.")
+        text = _translation_listen(buttons, listen_lang, prompt="Speak your text now.")
         if not text:
             _speak_voice_failure("I did not catch anything. Please try again.")
             return
         # The privacy choice happens below. Echoing the recognised sentence
         # here could expose confidential text through the main speaker.
-        _speak("Voice input captured.")
+        speak("Voice input captured.")
 
     # Reaching here means text is valid
     if not text:
-        _speak("No text to translate.")
+        speak("No text to translate.")
         return
 
     # ── STEP 3: Choose translation direction ──────────────────────────────
@@ -1067,108 +1147,60 @@ def mode_translate():
         direction_choice = _choose_translation_direction()
 
     if direction_choice is None:
-        _speak("No valid direction selected. Translation cancelled.")
+        speak("No valid direction selected. Translation cancelled.")
         return
 
     src, dest = direction_choice
     if input_method == "morse" and src != "en":
-        _speak(
+        speak(
             "Morse input currently supports English source text only. "
             "Please select English as the source or use voice input."
         )
         return
     label = f"{language_names[src]} to {language_names[dest]}"
 
-    # Ask before any source text leaves the device. A private translation may
-    # use only local providers and must neither read nor write the persistent
-    # translation cache. If Confidential Mode is unavailable, the established
-    # public behaviour remains available rather than silently claiming privacy.
-    private_translation = False
-    if _has("privacy"):
-        try:
-            privacy_choice = _modules["privacy"].ask_confidentiality(
-                _morse_serial_singleton
-            )
-            if privacy_choice not in ("PRIVATE", "NORMAL"):
-                return
-            private_translation = privacy_choice == "PRIVATE"
-        except Exception as e:
-            logger.error(f"Translation privacy selection failed: {e}")
-            _speak("Privacy selection failed. Translation cancelled for safety.")
-            return
-
-    # ── STEP 4: Translate and speak ───────────────────────────────────────
-    _speak(f"Translating. {label}.")
+    # Processing is independent of the output chosen after the result exists.
+    speak(f"Translating. {label}.")
     translator = _modules["translator"]
     try:
-        result = _process_cancellable(lambda: translator.translate_ex(
-            text, from_lang=src, to_lang=dest, privacy=private_translation))
-    except Exception as e:
-        logger.error(f"Translation error: {e}")
-        _speak("Translation failed. Please try again.")
+        result = _translation_process(buttons, lambda: translator.translate_ex(
+            text, from_lang=src, to_lang=dest, privacy=current_policy().private))
+    except Exception as error:
+        buttons.check_exit()
+        logger.error("Translation error (%s).", type(error).__name__)
+        speak("Translation failed. Please try again.")
         return
 
     if result is None:
         return
     if not result.text:
-        _speak("Translation returned an empty result.")
+        speak("Translation returned an empty result.")
         return
 
-    # The old code spoke whatever string came back — including the literal
-    # words "Translation failed. Original text: ..." — through the English
-    # voice. Two things were wrong with that: a failure was announced as
-    # though it were a result, and a real Hindi or Gujarati result was read
-    # in an English accent. translate_ex() reports both facts, so say the
-    # right thing and use the right voice.
-    tts_lang = translator.LANG_TO_TTS.get(result.lang, "eng")
+    if not result.translated:
+        speak("Translation could not produce a result. "
+              "You can choose where to hear your original text.", block=True)
 
-    if result.translated:
-        if private_translation:
-            try:
-                with _modules["privacy"].PrivateAudio():
-                    _speak("Private translation.", block=True)
-                    _speak(result.text, lang=tts_lang, block=True)
-            except Exception as e:
-                # Fail closed: never move private content to the speaker when
-                # the private output route cannot be established.
-                logger.error(f"Private translation playback failed: {e}")
-                _speak("Private audio is unavailable. The result was not spoken.")
-                return
-            print("\n  [private translation completed; text hidden]\n")
-            logger.info(
-                f"Private translation [{src}→{dest}] completed via "
-                f"{result.source} ({len(text)} source characters)."
-            )
-        else:
-            _speak("Translation.", block=True)
-            _speak(result.text, lang=tts_lang, block=True)
-            print(f"\n  {label}: {result.text}\n")
-            logger.info(
-                f"Translated [{src}→{dest}] via {result.source}: "
-                f"{text[:80]} → {result.text[:80]}")
-    else:
-        # Nothing was translated. Say why, then read back what the user gave
-        # us so the session still ends with something useful rather than a
-        # dead end.
-        if private_translation:
-            _speak(
-                "A private local translation was not available. "
-                "Your text was not sent to an online service.",
-                block=True,
-            )
-        elif not translator.is_online():
-            _speak("I could not translate that because there is no internet "
-                   "connection. Here is your original text.", block=True)
-        else:
-            _speak("The translation service did not respond. "
-                   "Here is your original text.", block=True)
-        if not private_translation:
-            _speak(result.text, lang=translator.LANG_TO_TTS.get(src, "eng"), block=True)
-            print(f"\n  [not translated — {result.error}]  {result.text}\n")
-        else:
-            print("\n  [private translation unavailable; text hidden]\n")
-        logger.warning(f"Translation unavailable [{src}→{dest}]: {result.error}")
+    def choose_output():
+        choice = _translation_choice(buttons,
+            "Your result is ready. Press button 1 to hear it in the earphones, "
+            "or button 2 to hear it on the speaker. "
+            "Press button 3 three times to leave translation.", valid=("1", "2"))
+        return {"1": "PRIVATE", "2": "NORMAL"}.get(choice)
 
+    try:
+        output = _deliver_result(
+            result.text, translator.LANG_TO_TTS.get(result.lang, "eng"),
+            serial=serial, choose_output=choose_output,
+            stop_check=buttons.exited.is_set)
+    finally:
+        buttons.check_exit()
+    if output == "PRIVATE":
+        print("\n  [earphone result completed; text hidden]\n")
+    elif output == "NORMAL":
+        print(f"\n  {label}: {result.text}\n")
+    logger.info("Translation [%s→%s] completed via %s; output=%s.",
+                src, dest, result.source, output or "cancelled")
 
 # A gesture never launches a mode on its own, and it is never confirmed with a
 # second gesture either. Recognising one hand shape reliably is hard enough on
@@ -1512,7 +1544,7 @@ def mode_gps():
         if choice == "1":
             location = _modules["gps"].get_location()
             prefix = "Simulation location. " if location.get("simulated") else "GPS location. "
-            _speak(prefix + location['address'], block=True)
+            _deliver_result(prefix + location['address'])
         elif choice == "2":
             if not _settings.get("navigation_enabled", False):
                 _speak("Walking navigation is not validated and is disabled.", block=True)
@@ -1524,7 +1556,7 @@ def mode_gps():
             confirmation = _select_with_buttons(("1", "2"),
                 f"Route summary for {destination}. Press button 1 to confirm, or button 2 to cancel.")
             if confirmation == "1":
-                _speak(_modules["gps"].get_directions(destination), block=True)
+                _deliver_result(_modules["gps"].get_directions(destination))
     except Exception:
         logger.warning("GPS request could not finish.")
         _speak("No current GPS location is available. Move to an open area and try again.", block=True)
@@ -1538,7 +1570,7 @@ def mode_confidential_demo():
         _speak("Confidential mode is not available.")
         return
 
-    _speak("This is a demonstration of confidential mode.")
+    _speak("This is a test of result audio output selection.")
     _modules["privacy"].speak_with_privacy_check(
         "This is the confidential mode audio test.", "eng", _morse_serial_singleton
     )
@@ -1604,7 +1636,7 @@ def mode_math_solver():
     result = _modules["mathsolver"].solve(problem)
     if result.ok:
         logger.info(f"Math solved locally: kind={result.kind}, exact={result.exact}")
-        _speak(result.spoken)
+        _deliver_result(result.spoken)
         return
 
     if result.error_code != "UNSUPPORTED":
@@ -1627,7 +1659,7 @@ def mode_math_solver():
         flush_fn=_flush_speech,
     )
     answer = _modules["mathsolver"].sanitize_ai_answer(answer)
-    _speak(answer or "The A I tutor did not return an answer.")
+    _deliver_result(answer or "The A I tutor did not return an answer.")
 
 # ── MAIN LOOP ───────────────────────────────────────────────
 
@@ -1660,7 +1692,7 @@ MODE_MAP = {
 
 
 def run_mode(choice):
-    """Select processing privacy before opening a camera or microphone."""
+    """Start processing automatically; completed results choose their output."""
     from modules.privacy_policy import session_active
     if choice not in MODE_MAP:
         return
@@ -1668,19 +1700,10 @@ def run_mode(choice):
     if choice not in enabled:
         _speak("This feature is not enabled in this device profile.", block=True)
         return
-    if choice in ("5", "6", "8") or session_active():
+    if session_active():
         return MODE_MAP[choice]()
-    if not _has("privacy"):
-        _speak("Privacy selection is unavailable. Please check the installation.", block=True)
-        return
-    mode = _modules["privacy"].ask_confidentiality(_morse_serial_singleton)
-    if mode not in ("PRIVATE", "NORMAL"):
-        return
     try:
-        with processing_session(PRIVATE if mode == "PRIVATE" else PUBLIC):
-            if mode == "PRIVATE":
-                with _modules["privacy"].PrivateAudio():
-                    return MODE_MAP[choice]()
+        with processing_session(PUBLIC):
             return MODE_MAP[choice]()
     except Exception as error:
         logger.error("Mode failed (%s).", type(error).__name__)

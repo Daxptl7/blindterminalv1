@@ -127,8 +127,8 @@
   "mic_input_index": null,
   "vad_aggressiveness": 2,
   "stt_engines": [
-    "vosk",
     "google",
+    "vosk",
     "sphinx"
   ],
   "vosk_model_path_en": "models_local/vosk/en",
@@ -167,7 +167,7 @@
   "libretranslate_url": "",
   "libretranslate_api_key": "",
   "libretranslate_trusted_local": false,
-  "translate_provider_order": "indictrans2,argos,libre,google,mymemory",
+  "translate_provider_order": "google,mymemory,libre,indictrans2,argos",
   "translate_timeout_s": 6.0,
   "translate_online_budget_s": 14.0,
   "translate_offline_backoff_s": 30.0,

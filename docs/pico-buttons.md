@@ -16,6 +16,20 @@ RAW:3 is emitted at press time, including a press subsequently held down.
 
 ## Voice Ask follow-up questions
 
+After entering a mode using its Morse digit, processing starts automatically.
+AI, speech recognition, OCR, and phrase translation try online services before
+their installed offline fallbacks. There is no online/offline selection prompt.
+Local fallback requires the appropriate models to be provisioned.
+
+When a completed result is ready, Button 1 selects earphones and Button 2 selects
+the speaker. Only that result (including all chunks of a long answer) uses the
+selected output. Menus, recording cues, and follow-up prompts stay on the speaker.
+Every new answer or explanation gets a fresh output choice after processing.
+An unanswered output prompt cancels result playback. Earphone selection never
+changes the processing policy, and an unavailable earphone route never causes
+the result to be read on the speaker. Live translation remains continuous on its
+configured live output and does not ask after every sentence.
+
 While Mode 3 is reading an answer, Button 1 once interrupts the current speech
 and its remaining sections. The device goes directly to the follow-up recording
 prompt, keeping the generated answer as recent conversation context and noting
@@ -31,18 +45,47 @@ After Mode 3 finishes reading its answer, it asks whether to continue:
 
 The question is repeated after every answer, so multiple follow-ups can stay in
 one conversation. Recent question/answer context is kept in memory for this
-mode only. The original private/public processing and output selection applies
-to every follow-up. Old button presses are cleared before the choice prompt,
+mode only. Each follow-up uses automatic processing and a new output choice.
+Old button presses are cleared before the choice prompt,
 while a choice made during the prompt is preserved.
 
 ## Translation input selection
 
-After entering Mode 4, press Button 1 once for a spoken phrase, Button 2 once
-for Morse input, or Button 3 once for live conversation. These are single button
-choices, not five-press Morse digits. The typed-text option has been removed.
-Source and target language menus use Button 1 for English, Button 2 for Hindi,
-and Button 3 for Gujarati. In live mode, choose a language pair instead, as
-described in [live translation setup](LIVE_TRANSLATION_SETUP.md).
+After entering Mode 4, press Button 1 once for a spoken phrase or Button 2 once
+for Morse input. Press Button 3 once and wait five seconds for live conversation.
+These are button choices, not five-press Morse digits.
+
+After each translation attempt, Button 1 starts another translation with the
+same input method. Button 2 returns to the audio/Morse/live input menu without
+leaving Translate. A live session that ends normally also offers this choice.
+For phrase translations, the earphone/speaker question comes after processing
+and before this repeat question. Output selection is independent of the input
+method and does not change the next menu's speaker output.
+
+Three consecutive Button 3 presses within five seconds leave Translate and
+return to the application's main menu. This works during menus, voice capture,
+Morse entry, processing, speech playback, and live conversation. Fully release
+the button between clicks. Another physical button interrupts the sequence.
+The firmware's decoded CONFIRM event does not count as an additional press.
+
+Because Button 3 also selects options, its normal actions wait until five
+seconds after the first click. This prevents a triple click from starting Live,
+submitting Morse text, or selecting Gujarati before it can exit:
+
+- Voice capture: press Button 3 once, then wait five seconds to finish recording.
+  A triple click cancels capture and leaves Translate without transcribing it.
+- Morse: a single Button 3 click inserts a space; double-click and wait five
+  seconds to submit the text. A triple click leaves Translate instead.
+- Source/target menus: Button 1 selects English, Button 2 Hindi, and a single
+  Button 3 click followed by the five-second wait selects Gujarati.
+- Live: choose a language pair as described in
+  [live translation setup](LIVE_TRANSLATION_SETUP.md). Triple-click Button 3
+  to leave Translate. On a laptop, Enter ends the live session and offers repeat.
+
+Without Pico buttons, type each menu number and press Enter; type `333` at any
+translation menu to return to the main menu. Voice recording finishes with Enter.
+Other modes retain their existing controls. The host handles this change; the
+existing firmware that emits a RAW event for every press does not need updating.
 
 ## Apply and verify
 

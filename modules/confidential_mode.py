@@ -6,8 +6,8 @@ Controls dual audio routing between the normal speaker and the wired
 software switching inside tts.py. No GPIO / bone conduction hardware
 involved anymore.
 
-Privacy selection uses physical buttons only. No microphone is opened.
-Missing buttons or an unanswered prompt cancel document playback.
+Output selection happens after processing and applies only to that result.
+No microphone is opened by the selector. An unanswered prompt cancels playback.
 """
 
 import logging
@@ -18,7 +18,7 @@ import select
 
 from modules.config_loader import load_settings
 from modules import tts
-from modules.privacy_policy import PRIVATE, current_policy, processing_session, session_active
+from modules.privacy_policy import PRIVATE, processing_session
 
 logger = logging.getLogger("ConfidentialMode")
 
@@ -49,7 +49,7 @@ def enable_earphone():
     """Routes audio strictly to the wired earphones (Private)."""
     tts.require_private_output()
     tts.use_earphone_output()
-    print(" 🔒 [PRIVATE MODE] Audio routed to wired earphones.")
+    print(" 🎧 [EARPHONE OUTPUT] Audio routed to wired earphones.")
 
 
 # The old name, from when this hardware was going to be a bone-conduction pad.
@@ -59,7 +59,7 @@ enable_bone_conduction = enable_earphone
 def enable_speaker():
     """Routes audio strictly to the main 3W speaker (Normal)."""
     tts.use_speaker_output()
-    print(" 🔊 [NORMAL MODE] Audio routed to main speaker.")
+    print(" 🔊 [SPEAKER OUTPUT] Prompts use the main speaker.")
 
 
 # main.py calls _modules["privacy"].reset_to_normal() after every OCR scan
@@ -85,16 +85,17 @@ class PrivateAudio:
 
 
 def ask_confidentiality(morse_serial=None):
-    """Button 1 selects earphones, Button 2 selects speaker; None cancels."""
-    if session_active():
-        return "PRIVATE" if current_policy().private else "NORMAL"
+    """Choose this result's audio output; this never chooses processing policy.
+
+    PRIVATE/NORMAL are legacy return values for earphones/speaker only.
+    """
     # The choice prompt must be audible from the device speaker. It is spoken
     # before the user has selected a destination, so routing it through the
     # private output made the later speaker/earphone choice sound reversed.
     enable_speaker()
     if morse_serial is None:
         if sys.stdin is not None and sys.stdin.isatty():
-            tts.speak("Type 1 for local private processing and earphones, or 2 for online processing and speaker.",
+            tts.speak("Your result is ready. Type 1 for earphones, or 2 for the speaker.",
                       "en", block=True)
             deadline = time.monotonic() + PROMPT_TIMEOUT
             while time.monotonic() < deadline:
@@ -104,14 +105,14 @@ def ask_confidentiality(morse_serial=None):
                         return "PRIVATE" if choice == "1" else "NORMAL"
                     if not choice:
                         break
-        tts.speak("No privacy option selected. Operation cancelled.", "en", block=True)
+        tts.speak("No audio output selected. Result playback cancelled.", "en", block=True)
         return None
     try:
         # Clear old presses before the prompt, never after it. A press made
         # during speech stays queued for the selection loop.
         while morse_serial.get_message(timeout=0.05) is not None:
             pass
-        tts.speak("Press button 1 for local private processing and earphones. Press button 2 for online processing and speaker.",
+        tts.speak("Your result is ready. Press button 1 to hear it in the earphones, or button 2 to hear it on the speaker.",
                   "en", block=True)
         deadline = time.monotonic() + PROMPT_TIMEOUT
         while True:
@@ -130,7 +131,7 @@ def ask_confidentiality(morse_serial=None):
         logger.exception("Privacy button input failed")
         tts.speak("Button input failed. Playback cancelled.", "en", block=True)
         return None
-    tts.speak("No privacy option selected. Playback cancelled.", "en", block=True)
+    tts.speak("No audio output selected. Playback cancelled.", "en", block=True)
     return None
 
 
@@ -139,19 +140,9 @@ def ask_privacy(morse_serial=None):
     return ask_confidentiality(morse_serial)
 
 
-def speak_with_privacy_check(text, lang_code, morse_serial=None):
-    """Asks confidential/public, then speaks `text` through the correct
-    audio path only — nothing is read aloud before the choice is made."""
-    mode = ask_confidentiality(morse_serial)
-    if mode not in ("PRIVATE", "NORMAL"):
-        return None
-    if mode == "PRIVATE":
-        with PrivateAudio():
-            tts.speak(text, lang_code, block=True)
-    else:
-        enable_speaker()
-        tts.speak(text, lang_code, block=True)
-    return mode
+def speak_with_privacy_check(text, lang_code, morse_serial=None, **kwargs):
+    """Choose an output after processing and route only this result there."""
+    return speak_document_with_privacy_check(text, lang_code, morse_serial, **kwargs)
 
 
 def split_text_for_speech(text, max_chars=600):
@@ -218,29 +209,32 @@ def speak_document_with_privacy_check(
     lang_code,
     morse_serial=None,
     chunk_chars=600,
+    *,
+    speak_fn=None,
+    choose_output=None,
+    stop_check=None,
+    before_play=None,
 ):
-    """Read a complete OCR document on one privacy route.
+    """Read one completed result using per-utterance audio routing.
 
-    The privacy question is asked once.  Every chunk is then spoken on the
-    selected output before that route is released.
+    Every chunk of a long result uses the chosen output. The global output
+    and processing policy are never changed by the result's route.
     """
     chunks = split_text_for_speech(text, max_chars=chunk_chars)
     if not chunks:
         return None
 
-    mode = ask_confidentiality(morse_serial)
+    mode = choose_output() if choose_output else ask_confidentiality(morse_serial)
     if mode not in ("PRIVATE", "NORMAL"):
         return None
-    if mode == "PRIVATE":
-        with PrivateAudio():
-            for index, chunk in enumerate(chunks):
-                prefix = "I found. " if index == 0 else ""
-                tts.speak(prefix + chunk, lang_code, block=True)
-    else:
-        enable_speaker()
-        for index, chunk in enumerate(chunks):
-            prefix = "I found. " if index == 0 else ""
-            tts.speak(prefix + chunk, lang_code, block=True)
+    device = tts.require_private_output() if mode == "PRIVATE" else tts.SPEAKER_DEVICE
+    if before_play:
+        before_play()
+    for chunk in chunks:
+        if speak_fn:
+            speak_fn(chunk, lang=lang_code, block=True, device=device, stop_check=stop_check)
+        else:
+            tts.speak_on_device(chunk, device, lang=lang_code, block=True, stop_check=stop_check)
     return mode
 
 
@@ -261,9 +255,9 @@ if __name__ == "__main__":
                 break
 
             print("\n─────────────────────────────────────────────")
-            print(" 🔒 Is this confidential?")
-            print(" Button 1 / key 1 -> PRIVATE (earphones only)")
-            print(" Button 2 / key 2 -> NORMAL (speaker)")
+            print(" Where should this result be played?")
+            print(" Button 1 / key 1 -> Earphones")
+            print(" Button 2 / key 2 -> Speaker")
             print(f" ({PROMPT_TIMEOUT}s timeout -> playback cancelled)")
             print("─────────────────────────────────────────────")
 

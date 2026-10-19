@@ -101,13 +101,22 @@ limited to the PCM range. The filtered and unfiltered recognition attempts
 are normalized independently. Saved source WAV files are unchanged. This
 processing does not change microphone mixer gain or automatic gain control.
 
-Privacy is selected before content capture. A private session prohibits cloud
-OCR/STT/AI/translation/TTS and persistent indexing. Temporary private recordings
-are removed after transcription or session cleanup. The operating system's disk
-and temporary-storage encryption/retention are separate device-image concerns.
-An unanswered privacy prompt cancels content playback. Explanation and replay
-inherit the selected privacy policy. Private AI requires a provisioned local
-model; otherwise the app reports unavailable without sending the question online.
+Normal mode entry starts processing automatically: online providers are tried
+before installed local fallbacks. There is no processing-policy question in the
+user flow. Provision local AI, OCR, translation, and language-specific speech
+models for the offline capabilities advertised by the device.
+
+After processing, Button 1 selects earphones for that result and Button 2 selects
+the speaker. Result routing is per utterance; it never changes subsequent menu,
+recording, or follow-up prompts. New answers and explanations ask again. An
+unanswered output prompt cancels result playback, and an unavailable earphone
+endpoint never falls back to speaking the result publicly. Earphone output does
+not imply offline processing or disable storage. Continuous Live translation
+uses its configured streaming output without a choice after every sentence.
+
+Explicit private processing remains an internal API policy for local-only calls
+and is independent of this output selector. The operating system's disk and
+temporary-storage encryption/retention are separate device-image concerns.
 
 ## Validate and start
 

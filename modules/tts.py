@@ -27,7 +27,7 @@ import re
 import shutil
 import signal
 import subprocess
-from modules.privacy_policy import current_policy, processing_session, PRIVATE
+from modules.privacy_policy import current_policy, processing_session
 import sys
 import tempfile
 import threading
@@ -844,16 +844,29 @@ class TTSManager:
         try:
             generation = getattr(self, "_generation", 0)
             self._check_cancelled(generation)
-            private = current_policy().private or (
+            strict_output = current_policy().private or (
                 bool(device_override) and device_override == EARPHONE_DEVICE)
-            if private:
+            if strict_output:
                 device = require_private_output(device_override)
-                # Private text must never be sent to a network synthesizer.
-                with processing_session(PRIVATE):
-                    data, fmt = self._synthesize(text, lang)
+                # Earphones choose an output, not a processing policy. Explicit
+                # private API calls already carry a local-only policy; ordinary
+                # results keep their configured online/offline synthesis chain.
+                data, fmt = self._synthesize(text, lang)
                 self._check_cancelled(generation)
                 if data and fmt and self._play_routed(data, fmt, device):
                     return True
+                if fmt == "mp3":
+                    # Missing MP3 players must not force an earphone result to
+                    # the default speaker. Retry WAV on the same selected card.
+                    for synth in (lambda: self._synthesize_offline_wav(text, lang),
+                                  lambda: _espeak_to_wav(text, self._current_rate, lang)):
+                        self._check_cancelled(generation)
+                        wav = synth()
+                        if wav:
+                            wav, _ = self._prepare_audio(wav, "wav")
+                        self._check_cancelled(generation)
+                        if wav and self._play_routed(wav, "wav", device):
+                            return True
                 self._check_cancelled(generation)
                 raise AudioRoutingError("Private playback failed; content was not sent to a public output.")
             data, fmt = self._synthesize(text, lang)
@@ -1091,7 +1104,7 @@ def speak(text: str, lang: str = "eng", block: bool = False, *, stop_check=None)
 
 
 def speak_on_device(text: str, device: str, lang: str = "eng",
-                    block: bool = True, timeout: float = 300.0):
+                    block: bool = True, timeout: float = 300.0, *, stop_check=None):
     """Speak `text` on one named ALSA card, using the normal synthesis chain.
 
     This is the good voice (gTTS, falling back to pyttsx3) delivered to a
@@ -1109,7 +1122,10 @@ def speak_on_device(text: str, device: str, lang: str = "eng",
     Defaults to block=True: every caller that routes speech has to know when
     the utterance finished (it is about to ask the user a question).
     """
-    return _get_manager().speak(text, lang, block=block, timeout=timeout, device=device)
+    options = dict(block=block, timeout=timeout, device=device)
+    if stop_check is not None:
+        options["stop_check"] = stop_check
+    return _get_manager().speak(text, lang, **options)
 
 def set_rate(rate: int):
     _get_manager().set_rate(rate)

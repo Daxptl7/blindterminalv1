@@ -55,10 +55,13 @@ class SpeechInterruptTests(unittest.TestCase):
         scope = mode_scope(_morse_serial_singleton=serial,
                            _drain_button_messages=mock.Mock(),
                            _speak=mock.Mock(side_effect=speak))
-        with mock.patch("modules.confidential_mode.split_text_for_speech",
-                        return_value=["First section", "Unspoken section"]):
-            self.assertTrue(scope["_speak_voice_answer"]("Answer"))
-        scope["_speak"].assert_called_once()
+        def deliver(text, **kwargs):
+            kwargs['before_play']()
+            speak("First section", stop_check=kwargs['stop_check'])
+            speak("Unspoken section", stop_check=kwargs['stop_check'])
+        scope['_deliver_result'] = mock.Mock(side_effect=deliver)
+        self.assertTrue(scope["_speak_voice_answer"]("Answer"))
+        scope['_deliver_result'].assert_called_once()
 
     def test_interrupt_records_followup_with_context_without_yes_no_prompt(self):
         speak_answer = mock.Mock(side_effect=[True, False])

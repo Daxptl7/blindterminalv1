@@ -117,10 +117,8 @@ ONLINE_BUDGET_S = float(_settings.get("translate_online_budget_s", 14.0))
 OFFLINE_BACKOFF_S = float(_settings.get("translate_offline_backoff_s", 30.0))
 MAX_CACHE_ENTRIES = int(_settings.get("translate_cache_entries", 2000))
 
-# Local engines are intentionally first: translation should remain private,
-# predictable and available when the network disappears.  Deployments can
-# override this with either a JSON list or a comma-separated string.
-_DEFAULT_PROVIDER_ORDER = "indictrans2,argos,libre,google,mymemory"
+# Online providers run first; provisioned local engines are automatic fallbacks.
+_DEFAULT_PROVIDER_ORDER = "google,mymemory,libre,indictrans2,argos"
 _configured_order = _settings.get("translate_provider_order", _DEFAULT_PROVIDER_ORDER)
 if isinstance(_configured_order, str):
     PROVIDER_ORDER = tuple(
@@ -947,7 +945,13 @@ def _ordered_providers() -> Tuple[Tuple[str, object, bool], ...]:
         provider, needs_network = _PROVIDER_MAP[name]
         ordered.append((name, provider, needs_network))
         seen.add(name)
-    return tuple(ordered)
+    # Existing device settings may still list local engines first. Keep the
+    # configured providers and their order within each tier, then try online
+    # processing before local fallback. Explicit private API calls skip cloud.
+    def is_cloud(entry):
+        name = entry[0]
+        return name in ("google", "mymemory") or (name == "libre" and not _libre_is_trusted_local())
+    return tuple(sorted(ordered, key=is_cloud, reverse=True))
 
 
 def _provider_chunk_limit(name: str) -> int:

@@ -31,9 +31,9 @@ class OCRDocumentReaderTests(unittest.TestCase):
         with mock.patch.object(
             confidential_mode, "ask_confidentiality", return_value="PRIVATE"
         ) as ask, mock.patch.object(
-            confidential_mode, "PrivateAudio"
+            confidential_mode.tts, "require_private_output", return_value="earphone"
         ) as private_audio, mock.patch.object(
-            confidential_mode.tts, "speak"
+            confidential_mode.tts, "speak_on_device"
         ) as speak:
             mode = confidential_mode.speak_document_with_privacy_check(
                 text, "eng", morse_serial=object(), chunk_chars=100
@@ -46,6 +46,7 @@ class OCRDocumentReaderTests(unittest.TestCase):
         spoken = " ".join(call.args[0] for call in speak.call_args_list)
         self.assertIn("word89", spoken)
         self.assertTrue(all(call.kwargs.get("block") for call in speak.call_args_list))
+        self.assertTrue(all(call.args[1] == "earphone" for call in speak.call_args_list))
 
     def test_public_document_uses_speaker_and_speaks_every_chunk(self):
         text = " ".join(f"line{index}" for index in range(80))
@@ -55,7 +56,7 @@ class OCRDocumentReaderTests(unittest.TestCase):
         ) as ask, mock.patch.object(
             confidential_mode, "enable_speaker"
         ) as speaker, mock.patch.object(
-            confidential_mode.tts, "speak"
+            confidential_mode.tts, "speak_on_device"
         ) as speak:
             mode = confidential_mode.speak_document_with_privacy_check(
                 text, "eng", chunk_chars=90
@@ -63,7 +64,9 @@ class OCRDocumentReaderTests(unittest.TestCase):
 
         self.assertEqual(mode, "NORMAL")
         ask.assert_called_once()
-        speaker.assert_called_once()
+        speaker.assert_not_called()
+        self.assertTrue(all(call.args[1] == confidential_mode.tts.SPEAKER_DEVICE
+                            for call in speak.call_args_list))
         self.assertGreater(speak.call_count, 1)
         self.assertIn("line79", " ".join(call.args[0] for call in speak.call_args_list))
 

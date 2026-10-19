@@ -96,6 +96,7 @@ class MathSolverProductTests(unittest.TestCase):
         }), mock.patch.object(main, "_keyboard_input", return_value="2"), \
              mock.patch.object(main, "_morse_type_sentence",
                                return_value="two plus two"), \
+             mock.patch("modules.confidential_mode.ask_confidentiality", return_value="NORMAL"), \
              mock.patch.object(main, "_speak",
                                side_effect=lambda text, **kwargs: spoken.append(text)):
             main.mode_math_solver()
@@ -117,6 +118,7 @@ class MathSolverProductTests(unittest.TestCase):
         }), mock.patch.object(main, "_keyboard_input", return_value="2"), \
              mock.patch.object(main, "_morse_type_sentence",
                                return_value="a short word problem"), \
+             mock.patch("modules.confidential_mode.ask_confidentiality", return_value="NORMAL"), \
              mock.patch.object(main, "_speak"):
             main.mode_math_solver()
         self.assertTrue(ai.ask_ai.call_args.kwargs["context"])

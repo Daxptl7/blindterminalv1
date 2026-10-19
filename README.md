@@ -120,7 +120,7 @@ All modules follow a strict **Decoupled Architecture** and communicate exclusive
 | **`translator.py`**        | Translates educational content and spoken responses between English, Hindi, and Gujarati.                                                  | Google Translate web endpoint   |
 | **`morse.py`**             | Decodes tactile dot/dash inputs from physical switches or keyboard keys into alphanumeric commands for silent operation.                   | Custom timing state machine     |
 | **`math_solver.py`**       | Safely parses spoken mathematics and exactly solves arithmetic, equations, percentages, averages, and determinants before any AI fallback. | `sympy`, Python AST              |
-| **`confidential_mode.py`** | Toggles silent audio readout and requires explicit user confirmation for private notifications.                                            | System state flags              |
+| **`confidential_mode.py`** | Asks where to play a completed result and routes only that result to earphones or speaker.                                                  | Per-result audio output         |
 
 Mode 6 installation, camera selection, Raspberry Pi optimization, and validation
 are documented in [docs/OBJECT_DETECTION_SETUP.md](docs/OBJECT_DETECTION_SETUP.md).
@@ -138,7 +138,8 @@ aim for 250–450 words; ask for a brief answer when preferred. Long answers are
 read in smaller sections so audio playback can finish each section.
 After each answer, press Button 1 once to ask a follow-up question or Button 2
 once to return to the main menu. A follow-up keeps the recent conversation and
-the same privacy/output choice. Finish each recording with three Button 3
+asks for a fresh earphone/speaker output choice after each answer is ready.
+Finish each recording with three Button 3
 presses as usual. An unanswered follow-up prompt returns to the menu.
 While an answer is still speaking, Button 1 once stops playback and opens the
 follow-up recording flow immediately, keeping the interrupted answer as context.
@@ -158,9 +159,13 @@ BlindAssist follows a **Star Topology** for software decoupling:
 ## 🚀 Setup & Running
 
 Read [deployment and release gates](docs/DEPLOYMENT.md) before preparing a device.
-Privacy is selected before capture; private sessions use local processing and
-verified earphones only. GPS simulation is explicit and walking navigation is
-disabled by default pending field validation.
+Processing automatically tries online services and falls back to installed local
+engines. After a completed result, Button 1 plays it in the earphones and Button 2
+plays it on the speaker. The selection applies only to that result; menus and
+follow-up prompts use the speaker. Earphone selection does not select offline
+processing. Live translation keeps streaming continuously. See
+[button controls](docs/pico-buttons.md). GPS simulation is explicit and walking
+navigation is disabled by default pending field validation.
 
 ### 📋 Prerequisites
 

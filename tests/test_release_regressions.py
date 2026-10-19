@@ -86,7 +86,7 @@ class PrivateSessionTests(unittest.TestCase):
             self.assertEqual(ocr.scan_and_read(), 'Private local document')
         cloud.assert_not_called()
 
-    def test_dispatch_selects_privacy_before_capture_and_preserves_explanation(self):
+    def test_dispatch_processes_before_output_choice_and_keeps_prompts_on_speaker(self):
         import main
         events, spoken = [], []
         ocr = mock.Mock()
@@ -95,21 +95,26 @@ class PrivateSessionTests(unittest.TestCase):
         ai = mock.Mock()
         ai.ask_ai.side_effect = lambda *a, **k: 'PRIVATE_EXPLANATION_SENTINEL'
         def say(text, *args, **kwargs):
-            spoken.append((text, current_policy().private))
+            spoken.append((text, kwargs.get('device', 'speaker'), current_policy().private))
+        def routed(text, device, **kwargs):
+            spoken.append((text, device, current_policy().private))
         with mock.patch.dict(main._modules, {'ocr':ocr,'ai_query':ai,'privacy':privacy}), \
                 mock.patch.dict(main._settings, {'enabled_modes':['1']}), \
                 mock.patch.object(privacy, 'ask_confidentiality', side_effect=lambda *a: events.append('privacy') or 'PRIVATE'), \
                 mock.patch.object(tts, 'require_private_output', return_value='private'), \
                 mock.patch.object(tts, 'speak', side_effect=say), \
+                mock.patch.object(tts, 'speak_on_device', side_effect=routed), \
                 mock.patch.object(main, '_speak', side_effect=say), \
                 mock.patch.object(main, '_button3_stop_signal', return_value=(None, lambda:None)), \
                 mock.patch.object(main, '_drain_button_messages'), \
                 mock.patch.object(main, '_select_with_buttons', return_value='1'):
             main.run_mode('1')
-        self.assertLess(events.index('privacy'), events.index('capture'))
-        self.assertIn(('PRIVATE_EXPLANATION_SENTINEL', True), spoken)
-        self.assertFalse(any('SENTINEL' in text and not private for text,private in spoken))
-        ai.index_text_in_rag.assert_not_called()
+        self.assertLess(events.index('capture'), events.index('privacy'))
+        self.assertEqual(events.count('privacy'), 2)
+        self.assertIn(('PRIVATE_EXPLANATION_SENTINEL', 'private', False), spoken)
+        self.assertFalse(any('SENTINEL' in text and device != 'private'
+                             for text,device,_ in spoken))
+        ai.index_text_in_rag.assert_called_once()
         self.assertFalse(current_policy().private)
 
     def test_background_processing_inherits_policy(self):

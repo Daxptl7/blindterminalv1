@@ -628,15 +628,13 @@ class RepairedDefectTests(unittest.TestCase):
         with mock.patch.dict(main._modules, {
             "translator": translator,
             "voice": mock.Mock(),
-            "privacy": SimpleNamespace(
-                ask_confidentiality=lambda _serial=None: "NORMAL"
-            ),
+            "privacy": importlib.import_module("modules.confidential_mode"),
         }), \
-             mock.patch.object(main, "_select_with_buttons", side_effect=["1", "2", "1"]), \
+             mock.patch.object(main, "_translation_choice", side_effect=["1", "2", "1", "2", "2", None]), \
              mock.patch.object(
                  main,
-                 "_listen_until_stopped",
-                 side_effect=lambda lang, prompt=None: listened.append(lang) or "नमस्ते",
+                 "_translation_listen",
+                 side_effect=lambda buttons, lang, prompt=None: listened.append(lang) or "नमस्ते",
              ), \
              mock.patch.object(main, "_speak"):
             main.mode_translate()
@@ -658,13 +656,11 @@ class RepairedDefectTests(unittest.TestCase):
         with mock.patch.dict(main._modules, {
             "translator": translator,
             "voice": mock.Mock(),
-            "privacy": mock.Mock(
-                ask_confidentiality=mock.Mock(return_value="NORMAL")
-            ),
+            "privacy": importlib.import_module("modules.confidential_mode"),
         }), \
-             mock.patch.object(main, "_select_with_buttons",
-                               side_effect=["1", "1", "2"]), \
-             mock.patch.object(main, "_listen_until_stopped", listened), \
+             mock.patch.object(main, "_translation_choice",
+                               side_effect=["1", "1", "2", "2", "2", None]), \
+             mock.patch.object(main, "_translation_listen", listened), \
              mock.patch.object(main, "_morse_type_sentence") as morse, \
              mock.patch.object(main, "_speak"):
             main.mode_translate()
@@ -686,6 +682,7 @@ class RepairedDefectTests(unittest.TestCase):
              mock.patch.object(main, "_listen_until_stopped", listened), \
              mock.patch.object(main, "_morse_type_sentence") as morse, \
              mock.patch.object(main, "_select_with_buttons", return_value="2") as follow_up, \
+             mock.patch("modules.confidential_mode.ask_confidentiality", return_value="NORMAL"), \
              mock.patch.object(main, "_speak") as speak:
             main.mode_voice_ask()
 
@@ -715,13 +712,11 @@ class RepairedDefectTests(unittest.TestCase):
         with mock.patch.dict(main._modules, {
             "translator": translator,
             "voice": mock.Mock(),
-            "privacy": mock.Mock(
-                ask_confidentiality=mock.Mock(return_value="NORMAL")
-            ),
+            "privacy": importlib.import_module("modules.confidential_mode"),
         }), \
-             mock.patch.object(main, "_select_with_buttons",
-                               side_effect=["1", "1", "3"]), \
-             mock.patch.object(main, "_listen_until_stopped", return_value="hello"), \
+             mock.patch.object(main, "_translation_choice",
+                               side_effect=["1", "1", "3", "2", "2", None]), \
+             mock.patch.object(main, "_translation_listen", return_value="hello"), \
              mock.patch.object(main, "_keyboard_input") as keyboard, \
              mock.patch.object(main, "_morse_type_sentence") as morse, \
              mock.patch.object(main, "_speak"):
@@ -738,25 +733,21 @@ class RepairedDefectTests(unittest.TestCase):
         translator = mock.Mock()
         live_module = mock.Mock()
         live_instance = live_module.LiveTranslator.return_value
-        stop_check = mock.Mock(return_value=False)
-        cancel_stop = mock.Mock()
 
         with mock.patch.dict(main._modules, {
             "translator": translator,
             "live_translator": live_module,
         }), \
-             mock.patch.object(main, "_select_with_buttons",
-                               side_effect=["3", "1"]), \
-             mock.patch.object(main, "_button3_stop_signal",
-                               return_value=(stop_check, cancel_stop)) as stop, \
-             mock.patch.object(main, "_settle_button_input"), \
+             mock.patch.object(main, "_translation_choice",
+                               side_effect=["3", "1", "2", None]), \
+             mock.patch.object(main, "_button3_stop_signal") as stop, \
+             mock.patch.object(main, "_translation_prepare"), \
              mock.patch.object(main, "_speak"):
             main.mode_translate()
 
         live_module.LiveTranslator.assert_called_once_with(lang_pair="en-gu")
-        live_instance.run_live.assert_called_once_with(stop_check=stop_check, status_fn=mock.ANY)
-        stop.assert_called_once_with(required_presses=2, confirm_stops=True)
-        cancel_stop.assert_called_once_with()
+        live_instance.run_live.assert_called_once_with(stop_check=mock.ANY, status_fn=mock.ANY)
+        stop.assert_not_called()
 
     # ── ai_query: timeouts that did not time out ─────────────────────────
     def test_successful_primary_does_not_contact_secondary_providers(self):
