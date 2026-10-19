@@ -47,6 +47,12 @@ def validate_settings(data):
     for key in ("tts_rate", "voice_keep_recordings", "voice_stop_press_count"):
         if key in data and (isinstance(data[key], bool) or not isinstance(data[key], int)):
             raise SettingsError(f"{key} must be an integer")
+    for key, low, high in (("tts_gain", 0.1, 4.0),
+                           ("tts_playback_speed", 0.5, 2.0)):
+        if key in data and (isinstance(data[key], bool)
+                or not isinstance(data[key], (int, float))
+                or not math.isfinite(data[key]) or not low <= data[key] <= high):
+            raise SettingsError(f"{key} must be between {low} and {high}")
     for key in ("live_echo_guard", "live_show_transcripts"):
         if key in data and not isinstance(data[key], bool):
             raise SettingsError(f"{key} must be true or false")

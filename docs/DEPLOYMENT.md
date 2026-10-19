@@ -16,7 +16,7 @@ Install system packages on the Pi:
 ```bash
 sudo apt update
 sudo apt install python3-venv python3-dev portaudio19-dev libsdl2-dev \
-  alsa-utils mpg123 espeak-ng tesseract-ocr tesseract-ocr-eng \
+  alsa-utils mpg123 ffmpeg espeak-ng tesseract-ocr tesseract-ocr-eng \
   tesseract-ocr-hin tesseract-ocr-guj rpicam-apps
 ./install.sh pi
 ```
@@ -58,6 +58,14 @@ verified named ALSA output different from the speaker. It cannot fall back to
 the default device. Private output on macOS is intentionally unavailable until
 a platform-specific route can be verified; use explicit public mode for desktop
 development. Test disconnecting each card before and during playback on the Pi.
+
+Speech loudness and speed are configured in `config/settings.json`:
+`tts_rate: 180` controls offline words per minute, `tts_playback_speed: 1.2`
+speeds up Google speech, and `tts_gain: 2.0` with
+`tts_normalize_enabled: true` raises speech level with peak limiting. Install
+`ffmpeg` for Google speed adjustment and loudness processing. Without it, PCM
+loudness adjustment remains available when the audio can be decoded, while
+Google speech retains its original speed. Restart the application after edits.
 
 Privacy is selected before content capture. A private session prohibits cloud
 OCR/STT/AI/translation/TTS and persistent indexing. Temporary private recordings

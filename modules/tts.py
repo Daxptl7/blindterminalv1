@@ -496,6 +496,74 @@ class TTSManager:
         return load_settings()
 
     # ── SYNTHESIS ────────────────────────────────────────────
+    def _prepare_audio(self, data: bytes, fmt: str):
+        """Apply speech loudness and online voice tempo before any player."""
+        settings = self.settings
+        gain = float(settings.get("tts_gain", 1.0))
+        normalize = settings.get("tts_normalize_enabled", False)
+        # Offline synthesis already uses tts_rate. Google returns fixed-rate
+        # MP3, so its tempo needs a separate, pitch-preserving adjustment.
+        speed = float(settings.get("tts_playback_speed", 1.0)) if fmt == "mp3" else 1.0
+        if gain == 1.0 and not normalize and speed == 1.0:
+            return data, fmt
+
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            filters = []
+            if speed != 1.0:
+                filters.append(f"atempo={speed}")
+            if normalize:
+                filters.append("loudnorm=I=-18:TP=-2:LRA=11")
+            filters.extend((f"volume={gain}", "alimiter=limit=0.95:level=false"))
+            try:
+                result = subprocess.run(
+                    [ffmpeg, "-hide_banner", "-loglevel", "error",
+                     "-i", "pipe:0", "-af", ",".join(filters),
+                     "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
+                     "-f", "wav", "pipe:1"],
+                    input=data, capture_output=True, timeout=30)
+                if result.returncode == 0 and len(result.stdout) > 44:
+                    return result.stdout, "wav"
+                logger.warning("Speech audio adjustment failed; using PCM loudness adjustment.")
+            except Exception as e:
+                logger.warning("Speech audio adjustment unavailable (%s).", type(e).__name__)
+
+        # Keep volume adjustment available on images without ffmpeg.
+        # Decode through the existing soundfile/mpg123 chain when necessary.
+        if speed != 1.0:
+            logger.warning("Install ffmpeg to apply tts_playback_speed to the Google voice.")
+        wav = _decode_mp3_to_wav(data) if fmt == "mp3" else data
+        if not wav:
+            return data, fmt
+        try:
+            import io
+            import wave
+            import numpy as np
+
+            with wave.open(io.BytesIO(wav), "rb") as source:
+                params = source.getparams()
+                if source.getsampwidth() != 2:
+                    return data, fmt
+                samples = np.frombuffer(source.readframes(source.getnframes()), dtype="<i2").astype(np.float64)
+            if samples.size:
+                peak = float(np.max(np.abs(samples)))
+                scale = gain
+                if normalize:
+                    rms = float(np.sqrt(np.mean(samples * samples)))
+                    if rms > 0:
+                        scale *= min(8.0, (32768 * 10 ** (-18 / 20)) / rms)
+                if peak > 0:
+                    scale = min(scale, 0.95 * 32767 / peak)
+                samples *= scale
+            out = io.BytesIO()
+            with wave.open(out, "wb") as target:
+                target.setparams(params)
+                target.writeframes(samples.astype("<i2").tobytes())
+            return out.getvalue(), "wav"
+        except Exception as e:
+            logger.warning("PCM loudness adjustment unavailable (%s).", type(e).__name__)
+            return data, fmt
+
     def _synthesize(self, text: str, lang: str):
         """Return (audio_bytes, format) — format is 'mp3' or 'wav'. ("", None) on failure."""
         engine_choice = self.settings.get("tts_engine", "pyttsx3")
@@ -517,13 +585,13 @@ class TTSManager:
                 fp.seek(0)
                 data = fp.read()
                 if data:
-                    return data, "mp3"
+                    return self._prepare_audio(data, "mp3")
             except Exception as e:
                 self._gtts_failed_at = time.time()
                 logger.warning(f"gTTS unavailable ({e}); using offline engine for 30s.")
 
         data = self._synthesize_offline_wav(text, lang)
-        return (data, "wav") if data else (b"", None)
+        return self._prepare_audio(data, "wav") if data else (b"", None)
 
     def _select_voice(self, lang: str):
         """Switch the shared engine to `lang`. Returns (chosen, previous).
@@ -789,6 +857,8 @@ class TTSManager:
                         for synth in (lambda: self._synthesize_offline_wav(text, lang),
                                       lambda: _espeak_to_wav(text, self._current_rate, lang)):
                             wav = synth()
+                            if wav:
+                                wav, _ = self._prepare_audio(wav, "wav")
                             if wav and self._play_routed(wav, "wav", device):
                                 logger.warning(
                                     f"Played {device} in the offline voice: no "
