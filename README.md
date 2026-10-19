@@ -136,6 +136,10 @@ Mode 3 (Voice Ask) gives detailed spoken explanations by default, including
 step-by-step reasoning and examples where helpful. Explanatory answers usually
 aim for 250–450 words; ask for a brief answer when preferred. Long answers are
 read in smaller sections so audio playback can finish each section.
+After each answer, press Button 1 once to ask a follow-up question or Button 2
+once to return to the main menu. A follow-up keeps the recent conversation and
+the same privacy/output choice. Finish each recording with three Button 3
+presses as usual. An unanswered follow-up prompt returns to the menu.
 
 ---
 

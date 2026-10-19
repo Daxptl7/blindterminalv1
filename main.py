@@ -609,38 +609,58 @@ def mode_morse_type():
         _speak("AI module is not available.")
 
 def mode_voice_ask():
-    """Mode 3: Voice → AI → TTS"""
+    """Mode 3: spoken questions and button-selected conversational follow-ups."""
     logger.info("Mode 3: Voice Ask")
 
     if not _has("voice"):
         _speak("Voice recognition is not available.")
         return
 
-    question = _listen_until_stopped("en-IN", prompt="Voice mode. Ask your question now.")
-
-    if not question:
-        _speak_voice_failure()
+    if not _has("ai_query"):
+        _speak("AI module is not available.")
         return
 
-    _speak(f"You asked: {question}")
-    logger.info("Voice question captured (%s characters).", len(question))
+    # Keep bounded conversation text only for this invocation. The surrounding
+    # run_mode() privacy session and output route stay active for every turn.
+    conversation = ""
+    while True:
+        prompt = ("Ask your follow-up question now." if conversation
+                  else "Voice mode. Ask your question now.")
+        question = _listen_until_stopped("en-IN", prompt=prompt)
+        if not question:
+            _speak_voice_failure()
+            return
 
-    # Emotion check (passive)
-    if _has("emotion"):
-        # Note: emotion engine needs audio file path, not available here
-        # In full implementation, voice.py should save the recording
-        pass
+        _speak(f"You asked: {question}")
+        logger.info("Voice question captured (%s characters).", len(question))
+        _speak("Thinking...")
+        options = {"detailed": True}
+        if conversation:
+            options["context"] = (
+                "Previous conversation from this Voice Ask session. Use it to "
+                "understand follow-up references and answer the current question.\n\n"
+                + conversation
+            )
+        answer = _ask_ai_cancellable(question, **options)
+        if not answer:
+            return
 
-    _speak("Thinking...")
-    if _has("ai_query"):
-        answer = _ask_ai_cancellable(question, detailed=True)
-        if answer:
-            # Keep each utterance within the audio player's playback timeout.
-            from modules.confidential_mode import split_text_for_speech
-            for chunk in split_text_for_speech(answer):
-                _speak(chunk, block=True)
-    else:
-        _speak("AI module is not available.")
+        # Finish the full answer before asking for a button choice.
+        from modules.confidential_mode import split_text_for_speech
+        for chunk in split_text_for_speech(answer):
+            _speak(chunk, block=True)
+
+        conversation = (
+            conversation + f"\nUser: {question[:1500]}\nAssistant: {answer[:3500]}\n"
+        )[-5500:]
+        choice = _select_with_buttons(
+            ("1", "2"),
+            "Would you like to ask a follow-up question? "
+            "Press button 1 for yes, or button 2 to return to the main menu.",
+        )
+        if choice != "1":
+            _speak("Returning to the main menu.")
+            return
 
 def _decode_morse_input(morse_text: str) -> str:
     """Decode a Morse code string (e.g. '.... . .-.. .-.. --- / .-- --- .-. .-.. -..') to English."""
@@ -767,7 +787,7 @@ def _select_with_buttons(valid: tuple, prompt: str,
     # reached on the device, where the buttons are the only selector; on a
     # headless Pi with no TTY _keyboard_input() returns the default and the
     # caller cancels cleanly.
-    logger.info("No Pico W connected — Mode 4 menu falling back to the keyboard.")
+    logger.info("No Pico W connected — button menu falling back to the keyboard.")
     typed = _keyboard_input("Choice: ", default=None)
     if not typed:
         return None

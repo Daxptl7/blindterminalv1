@@ -685,6 +685,7 @@ class RepairedDefectTests(unittest.TestCase):
         }), \
              mock.patch.object(main, "_listen_until_stopped", listened), \
              mock.patch.object(main, "_morse_type_sentence") as morse, \
+             mock.patch.object(main, "_select_with_buttons", return_value="2") as follow_up, \
              mock.patch.object(main, "_speak") as speak:
             main.mode_voice_ask()
 
@@ -695,7 +696,9 @@ class RepairedDefectTests(unittest.TestCase):
         ai_query.ask_ai.assert_called_once_with(
             "spoken question", detailed=True, speak_fn=None, flush_fn=None,
         )
-        chunks = speak.call_args_list[2:]
+        follow_up.assert_called_once()
+        self.assertEqual(follow_up.call_args.args[0], ("1", "2"))
+        chunks = [call for call in speak.call_args_list if call.kwargs.get("block")]
         self.assertGreater(len(chunks), 1)
         self.assertEqual(" ".join(call.args[0] for call in chunks), answer)
         self.assertTrue(all(len(call.args[0]) <= 600 and call.kwargs["block"]

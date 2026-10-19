@@ -14,6 +14,21 @@ after the double-click window, a double click sends CONFIRM, and a hold sends
 BACKSPACE once. The last pending letter is flushed before space/confirm.
 RAW:3 is emitted at press time, including a press subsequently held down.
 
+## Voice Ask follow-up questions
+
+After Mode 3 finishes reading its answer, it asks whether to continue:
+
+- Button 1 once: record a follow-up question. Finish recording with three
+  Button 3 presses, as for the first question.
+- Button 2 once: end Voice Ask and return to the main menu.
+- No answer within the configured button-choice timeout: return to the menu.
+
+The question is repeated after every answer, so multiple follow-ups can stay in
+one conversation. Recent question/answer context is kept in memory for this
+mode only. The original private/public processing and output selection applies
+to every follow-up. Old button presses are cleared before the choice prompt,
+while a choice made during the prompt is preserved.
+
 ## Apply and verify
 
 1. Copy the updated host files to the computer running BlindAssist and restart
