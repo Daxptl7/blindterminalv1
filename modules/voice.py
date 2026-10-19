@@ -135,9 +135,8 @@ _settings = _load_settings()
 # ── CONFIGURATION ───────────────────────────────────────────
 SAMPLE_RATE = 16000                    # every STT engine here wants 16 kHz mono
 
-# Capture card. On this device the microphone is the USB PnP dongle on card 4;
-# cards 2 and 3 are output-only and their capture inputs float, which is what
-# produced the mains hum that older versions accepted as speech.
+# Legacy capture default. A configured microphone must be a capture endpoint
+# listed by arecord -l; an earphone playback card need not expose an input.
 MIC_DEVICE = _settings.get("mic_device") or "plughw:4,0"
 MIC_INDEX = _settings.get("mic_input_index")
 VAD_AVAILABLE = False
@@ -966,7 +965,7 @@ def record(stop_check: Optional[Callable[[], bool]] = None,
                                    stderr=subprocess.PIPE, text=True)
 
         deadline = time.time() + duration + 2.0
-        stopped_by = "backstop"
+        stopped_by = "capture process"
 
         while process.poll() is None and time.time() < deadline:
             if _abort.is_set():
@@ -1010,6 +1009,8 @@ def record(stop_check: Optional[Callable[[], bool]] = None,
             process.kill()
             _, stderr = process.communicate(timeout=5)
 
+        if stopped_by == "capture process":
+            stopped_by = "capture error" if process.returncode else "duration limit"
         logger.info(f"Recording ended by {stopped_by}.")
 
         size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
@@ -1017,8 +1018,26 @@ def record(stop_check: Optional[Callable[[], bool]] = None,
             detail = (stderr or "").strip().splitlines()
             logger.error(f"arecord failed on {MIC_DEVICE}: "
                          f"{detail[-1] if detail else 'no audio captured'}")
-            _set_error("I could not use the microphone. "
-                       "Please check that it is plugged in.")
+            reason = (stderr or "").lower()
+            if any(message in reason for message in (
+                    "no such file or directory", "cannot find card", "invalid card",
+                    "no such device", "unknown pcm")):
+                logger.error(
+                    "Configured microphone input %s is unavailable. Run "
+                    "python3 mic_check.py --list on the Pi, then select an "
+                    "actual capture device with --select. Earphone output "
+                    "does not identify the headset microphone input.", MIC_DEVICE)
+                _set_error("The selected microphone input is unavailable. "
+                           "Please select the headset capture device in microphone settings.")
+            elif "device or resource busy" in reason:
+                _set_error("The microphone is being used by another program. "
+                           "Close the other recorder and try again.")
+            elif "permission denied" in reason:
+                _set_error("The app does not have permission to use the microphone. "
+                           "Please check audio device permissions.")
+            else:
+                _set_error("I could not use the microphone. "
+                           "Please check that it is plugged in.")
             return None
 
         # arecord was killed mid-write, so its RIFF header can still claim zero

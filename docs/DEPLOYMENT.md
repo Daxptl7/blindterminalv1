@@ -59,6 +59,18 @@ the default device. Private output on macOS is intentionally unavailable until
 a platform-specific route can be verified; use explicit public mode for desktop
 development. Test disconnecting each card before and during playback on the Pi.
 
+Select microphone input separately from earphone output. Run
+`python3 mic_check.py --list` on the Pi to list capture endpoints, then use
+`python3 mic_check.py --select plughw:N,D` with the actual capture card and device
+numbers from that listing. Selection saves `mic_device` without recording and
+rejects numeric routes that are not listed for capture. Restart the app afterward.
+An output listed by `aplay -l` may have no matching microphone input, and USB
+card numbers can change after reconnecting or rebooting. To measure which
+connected microphone actually hears speech, run `python3 mic_check.py` interactively.
+An analogue headset requires a microphone-capable connection; the Raspberry Pi's
+onboard 3.5 mm audio/video output is not a headset microphone input. See
+[Raspberry Pi audio options](https://pip-assets.raspberrypi.com/categories/1259-audio-camera-and-display/documents/RP-008124-WP/Choosing-an-Audio-option).
+
 Speech loudness and speed are configured in `config/settings.json`:
 `tts_rate: 180` controls offline words per minute, `tts_playback_speed: 1.2`
 speeds up Google speech, and `tts_gain: 2.0` with

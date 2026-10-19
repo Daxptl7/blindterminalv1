@@ -1,22 +1,22 @@
 """
 mic_check.py — which USB sound card is the microphone actually on?
 ==================================================================
-This device has two identical "USB Audio Device" dongles (a bone-conduction
-unit and a speaker unit). Both advertise a capture channel, but only one of
-them has a live microphone capsule on it — and ALSA's "default" is neither.
-That is why voice input recorded 8 seconds of mains hum and then said "I didn't
-catch that": the recorder was listening to the wrong card.
+Playback and capture endpoints are separate. A sound card used by the earphone
+may have no microphone input, and USB card numbers can change after reboot.
+Choose a capture endpoint from arecord -l instead of copying earphone_device.
 
 Run this, speak when told, and it reports the level each card heard. The card
 that jumps when you speak is the microphone.
 
     python3 mic_check.py            # test every capture card, then offer to save
     python3 mic_check.py --list     # just list devices, no recording
+    python3 mic_check.py --select plughw:2,0  # save a listed capture device, no recording
 
-The chosen card is written to config/settings.json as "mic_device", which both
-voice.py capture backends (arecord and PyAudio) then use.
+The chosen card is written to config/settings.json as "mic_device", used by
+voice.py's arecord backend and, without an override, live translation on Linux.
 """
 
+import argparse
 import json
 import math
 import subprocess
@@ -41,6 +41,17 @@ def list_devices():
                              timeout=5).stdout.strip() or "  none found")
     except Exception as e:
         print(f"  could not run arecord: {e}")
+
+    try:
+        configured = json.loads(CONFIG_PATH.read_text()).get("mic_device")
+        print(f"\nConfigured microphone input: {configured or 'legacy default plughw:4,0'}")
+        if configured and configured.startswith(("plughw:", "hw:")):
+            comparable = "plughw:" + configured.split(":", 1)[1]
+            if comparable not in capture_cards():
+                print("  This route is not listed among the numeric capture devices.")
+                print("  Earphone playback does not prove microphone input is available.")
+    except (OSError, ValueError, AttributeError):
+        pass
 
     print("\nPortAudio input devices (PyAudio):")
     try:
@@ -149,19 +160,35 @@ def save_choice(device):
         settings = json.loads(CONFIG_PATH.read_text())
     except Exception as e:
         print(f"Could not read {CONFIG_PATH}: {e}")
-        return
+        return False
     settings["mic_device"] = device
     try:
         CONFIG_PATH.write_text(json.dumps(settings, indent=2) + "\n")
         print(f"Saved mic_device = {device} to {CONFIG_PATH}")
+        print("Restart BlindAssist to use this microphone input.")
+        return True
     except Exception as e:
         print(f"Could not write {CONFIG_PATH}: {e}")
+        return False
 
 
 def main():
-    if "--list" in sys.argv:
+    parser = argparse.ArgumentParser(description=__doc__)
+    options = parser.add_mutually_exclusive_group()
+    options.add_argument("--list", action="store_true", help="list devices without recording")
+    options.add_argument("--select", metavar="DEVICE", help="save a listed capture route without recording")
+    args = parser.parse_args()
+    if args.list:
         list_devices()
         return
+    if args.select:
+        devices = capture_cards()
+        if args.select not in devices:
+            print(f"{args.select} is not listed as a capture device; settings were not changed.")
+            print("Available capture routes: " + (", ".join(devices) or "none"))
+            print("Connect a headset microphone input and run python3 mic_check.py --list.")
+            return 1
+        return 0 if save_choice(args.select) else 1
 
     list_devices()
     devices = capture_cards()
@@ -201,6 +228,6 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main() or 0)
     except KeyboardInterrupt:
         print("\nCancelled.")
