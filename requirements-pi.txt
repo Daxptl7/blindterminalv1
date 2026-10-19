@@ -10,7 +10,7 @@
 # Audio hardware & offline STT
 pygame>=2.6.0
 PyAudio>=0.2.14
-sounddevice>=0.4.7
+sounddevice>=0.5.1,<0.6
 soundfile>=0.12.1
 webrtcvad-wheels
 vosk>=0.3.45

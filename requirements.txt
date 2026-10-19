@@ -15,6 +15,8 @@ pyttsx3>=2.90
 gTTS>=2.5.0
 pygame>=2.6.0
 SpeechRecognition>=3.10.0
+sounddevice>=0.5.1,<0.6
+audioop-lts>=0.2.1; python_version >= "3.13"
 python-dotenv>=1.0.0
 
 # vosk is the ONLY offline speech-recognition engine that actually works well
@@ -98,7 +100,6 @@ logfire>=2.0.0
 #
 #   pip install PyAudio>=0.2.14          # VAD capture (hands-free voice)
 #   pip install webrtcvad-wheels         # VAD capture (hands-free voice)
-#   pip install sounddevice>=0.4.7
 #   pip install soundfile>=0.12.1
 #   pip install librosa>=0.10.1          # emotion engine
 #   pip install scikit-learn>=1.5.0      # emotion engine

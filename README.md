@@ -129,6 +129,14 @@ measurement are documented in [docs/GESTURE_CONTROL_SETUP.md](docs/GESTURE_CONTR
 Mode 9 supported notation, verification behavior, and laptop/Pi tests are
 documented in [docs/MATH_SOLVER_SETUP.md](docs/MATH_SOLVER_SETUP.md).
 
+Mode 4 live conversation setup, Raspberry Pi audio checks, and recorded-speech
+evaluation are documented in [docs/LIVE_TRANSLATION_SETUP.md](docs/LIVE_TRANSLATION_SETUP.md).
+
+Mode 3 (Voice Ask) gives detailed spoken explanations by default, including
+step-by-step reasoning and examples where helpful. Explanatory answers usually
+aim for 250–450 words; ask for a brief answer when preferred. Long answers are
+read in smaller sections so audio playback can finish each section.
+
 ---
 
 ## 🏛️ System Architecture & Execution Flow

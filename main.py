@@ -443,14 +443,16 @@ def mode_ocr_scan():
         #   "No text detected in the image."
         #   "OCR error: ..."
         failure_markers = (
-            "camera not available", "capture failed", "processing error",
-            "ocr unavailable", "no text detected", "ocr error",
+            "camera not available.", "image capture failed.", "image processing error.",
+            "ocr unavailable:", "ocr error:",
         )
-        if not text or any(marker in text.lower() for marker in failure_markers):
+        if (not text or text.lower().startswith(failure_markers)
+                or text.strip().lower() == "no text detected in the image."):
             if text and text.lower().startswith(("ocr unavailable", "ocr error")):
                 _speak("The reader could not complete processing. Returning to the menu.")
             else:
-                _speak("I could not read the text clearly. Returning to the menu.")
+                _speak("I could not read the text clearly. Keep the page flat, or brighten the phone "
+                       "screen and tilt it away from reflections. Select scan to try again.")
             return
 
         # —— PRIVACY ROUTING (FIX 1 & FIX 2) ——————————————————
@@ -631,15 +633,12 @@ def mode_voice_ask():
 
     _speak("Thinking...")
     if _has("ai_query"):
-        # ask_ai_and_speak() asks — on the speaker — whether the answer is
-        # confidential, then reads it out on the earphone (Button 1) or the
-        # speaker (Button 2, or after the timeout). It speaks the answer
-        # itself, so there must be no _speak(answer) here: that would play
-        # the whole answer a second time, on the wrong device, immediately
-        # after the user has just chosen where to hear it.
-        answer = _ask_ai_cancellable(question)
+        answer = _ask_ai_cancellable(question, detailed=True)
         if answer:
-            _speak(answer, block=True)
+            # Keep each utterance within the audio player's playback timeout.
+            from modules.confidential_mode import split_text_for_speech
+            for chunk in split_text_for_speech(answer):
+                _speak(chunk, block=True)
     else:
         _speak("AI module is not available.")
 
@@ -827,21 +826,25 @@ def mode_translate():
         print("\n[Live Translation] Select Language Pair:")
         print("  Button 1 → English <-> Gujarati")
         print("  Button 2 → English <-> Hindi")
+        print("  Button 3 → Hindi <-> Gujarati")
         pair_choice = _select_with_buttons(
-            ("1", "2"),
+            ("1", "2", "3"),
             "Live conversation mode. Press button 1 for English and Gujarati, "
-            "or button 2 for English and Hindi."
+            "button 2 for English and Hindi, or button 3 for Hindi and Gujarati."
         )
-        if pair_choice not in ("1", "2"):
+        if pair_choice not in ("1", "2", "3"):
             _speak("No language pair selected. Live translation cancelled.")
             return
 
-        pair = "en-hi" if pair_choice == "2" else "en-gu"
-        pair_name = "English and Hindi" if pair == "en-hi" else "English and Gujarati"
+        pair, pair_name = {
+            "1": ("en-gu", "English and Gujarati"),
+            "2": ("en-hi", "English and Hindi"),
+            "3": ("hi-gu", "Hindi and Gujarati"),
+        }[pair_choice]
 
         _speak(
-            f"Starting live conversation interpreter for {pair_name}. "
-            "Start speaking anytime. Double-press button 3 or press Enter to stop.",
+            f"Connecting live conversation interpreter for {pair_name}. Please wait. "
+            "Double-press button 3 or press Enter to stop.",
             block=True
         )
 
@@ -854,10 +857,16 @@ def mode_translate():
         try:
             live_mod = _modules["live_translator"]
             interpreter = live_mod.LiveTranslator(lang_pair=pair)
-            interpreter.run_live(stop_check=stop_check)
+            interpreter.run_live(
+                stop_check=stop_check,
+                status_fn=lambda message: _speak(message, block=True),
+            )
         except Exception as e:
-            logger.error(f"Live translation runtime error: {e}")
-            _speak("Live translation encountered an error.")
+            logger.error("Live translation runtime error (%s).", type(e).__name__)
+            if isinstance(e, getattr(live_mod, "LiveTranslationError", ())):
+                _speak(str(e), block=True)
+            else:
+                _speak("Live translation could not start. Check the live audio setup and internet connection.", block=True)
         finally:
             cancel_stop()
         _speak("Live conversation ended. Returning to menu.")

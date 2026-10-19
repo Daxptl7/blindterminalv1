@@ -5,6 +5,10 @@ provider order is offline-first: IndicTrans2, Argos, trusted/local Libre, then
 the cloud providers. A private request never uses a cloud service or the
 persistent text cache.
 
+For real-time speech interpretation, follow
+[live translation setup](LIVE_TRANSLATION_SETUP.md). It has its own Gemini
+streaming connection, audio-device preflight, and recorded-speech benchmark.
+
 ## Laptop phase
 
 Use Python 3.10 or newer in a separate translation environment. The current

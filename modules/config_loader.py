@@ -47,6 +47,30 @@ def validate_settings(data):
     for key in ("tts_rate", "voice_keep_recordings", "voice_stop_press_count"):
         if key in data and (isinstance(data[key], bool) or not isinstance(data[key], int)):
             raise SettingsError(f"{key} must be an integer")
+    for key in ("live_echo_guard", "live_show_transcripts"):
+        if key in data and not isinstance(data[key], bool):
+            raise SettingsError(f"{key} must be true or false")
+    for key in ("live_input_device", "live_output_device"):
+        value = data.get(key)
+        if value is not None and (isinstance(value, bool)
+                or not isinstance(value, (str, int)) or isinstance(value, int) and value < 0):
+            raise SettingsError(f"{key} must be a device name, non-negative index, or null")
+    for key, low, high in (("live_mic_gain", 0.1, 4),
+                           ("live_vad_silence_ms", 250, 2000),
+                           ("live_echo_tail_ms", 1, 2000)):
+        if key in data and (isinstance(data[key], bool)
+                or not isinstance(data[key], (int, float))
+                or not math.isfinite(data[key]) or not low <= data[key] <= high):
+            raise SettingsError(f"{key} must be between {low} and {high}")
+    if "live_max_reconnects" in data:
+        value = data["live_max_reconnects"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 5:
+            raise SettingsError("live_max_reconnects must be an integer between 0 and 5")
+    if "live_translation_glossary" in data:
+        glossary = data["live_translation_glossary"]
+        if (not isinstance(glossary, dict) or len(glossary) > 100
+                or len(json.dumps(glossary, ensure_ascii=False)) > 4000):
+            raise SettingsError("live_translation_glossary must be an object of at most 100 terms and 4000 characters")
     if "enabled_modes" in data and (not isinstance(data["enabled_modes"], list)
             or any(value not in list("123456789") for value in data["enabled_modes"])):
         raise SettingsError("enabled_modes must be a list of mode digits")

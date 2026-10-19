@@ -675,6 +675,8 @@ class RepairedDefectTests(unittest.TestCase):
     def test_voice_ask_uses_microphone_path_not_morse_sentence_path(self):
         main = importlib.import_module("main")
         ai_query = mock.Mock()
+        answer = " ".join(["A detailed explanation with a helpful example."] * 60)
+        ai_query.ask_ai.return_value = answer
         listened = mock.Mock(return_value="spoken question")
 
         with mock.patch.dict(main._modules, {
@@ -683,14 +685,21 @@ class RepairedDefectTests(unittest.TestCase):
         }), \
              mock.patch.object(main, "_listen_until_stopped", listened), \
              mock.patch.object(main, "_morse_type_sentence") as morse, \
-             mock.patch.object(main, "_speak"):
+             mock.patch.object(main, "_speak") as speak:
             main.mode_voice_ask()
 
         listened.assert_called_once_with(
             "en-IN", prompt="Voice mode. Ask your question now."
         )
         morse.assert_not_called()
-        ai_query.ask_ai.assert_called_once()
+        ai_query.ask_ai.assert_called_once_with(
+            "spoken question", detailed=True, speak_fn=None, flush_fn=None,
+        )
+        chunks = speak.call_args_list[2:]
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual(" ".join(call.args[0] for call in chunks), answer)
+        self.assertTrue(all(len(call.args[0]) <= 600 and call.kwargs["block"]
+                            for call in chunks))
 
     def test_translate_type_button_does_not_enter_morse_input(self):
         main = importlib.import_module("main")
@@ -739,7 +748,7 @@ class RepairedDefectTests(unittest.TestCase):
             main.mode_translate()
 
         live_module.LiveTranslator.assert_called_once_with(lang_pair="en-gu")
-        live_instance.run_live.assert_called_once_with(stop_check=stop_check)
+        live_instance.run_live.assert_called_once_with(stop_check=stop_check, status_fn=mock.ANY)
         stop.assert_called_once_with(required_presses=2, confirm_stops=True)
         cancel_stop.assert_called_once_with()
 

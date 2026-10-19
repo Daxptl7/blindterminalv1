@@ -1,107 +1,138 @@
-# Spoken OCR positioning
+# OCR: documents and phone screens
 
-OCR mode now guides positioning before capture, then uses the existing OCR and
-private/public document playback. Guidance runs locally using OpenCV; it does
-not send preview frames to a cloud service. Existing OCR cloud settings still
-apply to the accepted photograph.
+Public OCR tries Gemini first with the configured key, then falls back to the
+local reader when the request fails or no text is found. Private OCR stays local
+and announces this before reading. Preview guidance always runs locally.
 
-Keep the page still and move the camera as instructed. Directions describe
-camera movement in the configured upright, unmirrored view. A page to the right
-of that view produces “Move the camera slightly right.” When no page boundary
-can be located, guidance asks the user to search rather than inventing a direction.
+## Spoken scan flow
 
-Press Button 3 three times (or the configured voice stop count) to cancel.
-On a development terminal, Ctrl-C cancels positioning. Each invocation makes one
-scan attempt. Timeout or a rejected still returns to the menu, without restarting
-preview or offering an automatic retry loop. Select OCR again to scan another page.
-An explanation runs only after an explicit yes; silence does not start another task.
+1. Hold the page or phone still. Turn on the phone screen and stop scrolling.
+2. Move the camera in the direction spoken. Only one correction is given at a
+   time: light, movement, framing, distance, or focus. Directions describe camera
+   movement in the configured upright view. An uncertain view gets a search
+   instruction rather than an invented direction.
+3. A stable view must remain in position for at least one second before capture.
+   Corrections can repeat after ten seconds, up to three times per continuous
+   instruction. Search/focus reminders include screen reflections and camera angle.
+4. The device says to hold still while taking the photograph. It selects the
+   sharpest of the configured stills and checks the final photograph. A blurry,
+   dark, clipped or unrecognized still gets one guided recapture by default.
+5. “Picture taken” means the user can relax their hand. Online/local reading
+   progress continues separately. The camera burst does not control upload time.
+6. Document playback and the optional explanation keep the existing privacy and
+   button controls. Button 3's configured stop count cancels scanning.
 
-Slow image capture and OCR operations speak a status update after 8 seconds,
-then at most one more after another 20 seconds. Completion stops updates before
-document playback. An online failure is announced as a service failure, followed
-by an explanation that local processing may take longer. An unreadable response
-is described separately from a service failure. Progress messages contain no
-recognized document text; normal privacy routing still controls document playback.
+The previous ten-second forced capture is removed. A positioning timeout gives
+an actionable instruction and returns to the menu. No useful framing is inferred
+merely because time passed. The old `ocr_guidance_auto_capture_s` setting is ignored.
 
-A capture subprocess or in-flight OCR request must finish or hit its existing
-timeout before cancellation returns; cancelled results are discarded and further
-status speech is suppressed.
+The analyzer uses page/screen bounds or visible character-like marks, supports
+both light and dark screen themes, and measures illumination in the target region
+instead of averaging a bright screen with its dark surroundings. Text-sized
+patches are used for sharpness so a sharp bezel cannot by itself certify focus.
+These are framing heuristics, not a guarantee of complete or accurate transcription.
 
-## Camera support
+## Gemini requests and fallback
 
-Pi preview uses `rpicam-vid` (or `libcamera-vid`) MJPEG stdout, continuous focus on
-rpicam, and a background reader that retains only the latest frame. It stops
-before `rpicam-still` captures full-resolution photos. USB preview similarly
-drains frames continuously, then stops before still capture. No picamera2 Python
-dependency is added. Missing or stalled preview produces a spoken error.
-The stream options follow the [Raspberry Pi camera documentation](https://www.raspberrypi.com/documentation/computers/camera_software.html).
+Only the accepted photograph is uploaded. A separate upload copy is resized to a
+maximum 3200-pixel long edge, JPEG compressed and limited to 2 MB by default. The
+original still remains full resolution for local OCR. A requested PNG is used
+only when it fits the byte budget; otherwise JPEG is used. Upload copies stay in
+memory. The image is sent inline in one request, following Google's
+[image input documentation](https://ai.google.dev/gemini-api/docs/image-understanding).
 
-The final still is checked again because video and still sensor modes can have
-different fields of view. Readable text is accepted even when the paper touches
-the frame boundary or its outline cannot be found. Only several text-like marks
-near an edge trigger a possible clipping warning; paper edges alone do not.
-Each corrective instruction is spoken once per positioning attempt.
+Each online attempt has a 60-second request timeout, with at most two attempts
+inside a 95-second overall online budget. The caller stops waiting at that budget
+plus five seconds for preparation/cleanup; an in-flight HTTP call may finish later
+but cannot announce its result. Cancellation discards its result and stops retries.
+SDK retries are disabled so they cannot silently multiply the application retry
+count; timeouts use milliseconds as described by the
+[Google Gen AI SDK](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions).
 
-After about 10 seconds, the scanner attempts full-resolution OCR on a steady,
-adequately lit view even when framing or text-shape detection remains uncertain.
-OCR determines whether text is actually readable. The final still's framing alone
-cannot restart guidance when text-like detail is present. This prioritizes reading
-the visible text; it does not guarantee that the complete page is in view.
-Dark, moving or detected blurry previews still require correction. Short prompts
-play serially, so old corrections do not queue up.
+Only connection/timeouts and selected temporary server errors get a retry.
+A model-specific rejection of the optional media-resolution setting gets one
+retry without that setting. Bad credentials, unavailable models and exhausted
+quota go directly to local fallback, each with a different spoken explanation.
+A truncated/blocked response is not passed off as a complete document.
 
-## Configuration
+Short readings, including one-word labels, are valid. The old minimum-word and
+image-area coverage rules are removed: a 12-megapixel image can contain just one
+word. Phrases such as “I cannot attend” inside a real phone message are no longer
+mistaken for an OCR failure. The old `ocr_gemini_min_words` and
+`ocr_gemini_coverage_check_min_pixels` settings are ignored.
 
-Defaults apply even when existing `config/settings.json` lacks these keys. Both
-example settings files include all options. Most useful settings:
+Logs report request model, upload dimensions/bytes, elapsed time, attempt number,
+HTTP status and failure category. They do not log the image, transcription, API
+key or provider error body. These categories distinguish a connection problem
+from credentials, quota, model and request-settings failures on the device.
 
-| Key | Default | Purpose |
+## Settings
+
+### Direction and movement reference
+
+The scanner says left, right, up or down and asks the user to pause after each
+movement. These describe sliding the camera parallel to the text: up means
+toward the top of the text, down toward its bottom. Closer/farther instructions
+refer separately to camera distance. The opening prompt explains this reference.
+
+By default the movement is “one small step”; the camera cannot measure absolute
+centimetres from an unknown page or phone. For approximate centimetre prompts,
+configure the actual target dimensions in the device's `config/settings.json`.
+For an upright portrait A4 page, for example:
+
+```json
+"ocr_guidance_target_width_cm": 21,
+"ocr_guidance_target_height_cm": 29.7
+```
+
+For landscape orientation swap those dimensions. For a phone use the dimensions
+of the detected screen/outline, not the A4 values. Leave both settings at zero
+when switching between targets of unknown size. The example is a reference setup,
+not an assumption made automatically for every scan.
+
+When a matching, complete, nearly parallel outline is visible, the scanner
+estimates the image offset using those dimensions and says, for example,
+“Move the camera about 3 centimetres left. Keep it facing the text, then pause
+for guidance.” Steps are limited to 1–5 centimetres before observing again.
+When the outline is missing, clipped, tilted or inconsistent with the configured
+dimensions, it falls back to small-step guidance. Distances are estimates and
+depend on recognizing the correct target outline.
+
+New defaults apply when keys are absent. Existing explicit settings override them;
+in particular, change an existing `ocr_gemini_timeout_s: 20` to `60` to get the longer
+request window. Keep API keys in the device's untracked `config/settings.json`.
+Do not replace that file with an example. Environment keys `GEMINI_API_KEY` and
+`GOOGLE_API_KEY` are also supported if the settings key is empty.
+
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `ocr_guidance_enabled` | true | Enable guided positioning in OCR mode |
-| `ocr_guidance_auto_capture_s` | 10 | Try OCR after brief guidance despite uncertain framing |
+| `ocr_gemini_timeout_s` | 60 | Timeout for each HTTP request, seconds |
+| `ocr_gemini_total_timeout_s` | 95 | Total online processing budget, seconds |
+| `ocr_gemini_attempts` | 2 | Maximum application attempts, including first request |
+| `ocr_gemini_max_image_edge` | 3200 | Maximum upload long edge, pixels |
+| `ocr_gemini_max_image_bytes` | 2000000 | Maximum encoded upload image bytes |
+| `ocr_gemini_image_quality` | 92 | Initial JPEG quality, reduced no lower than 85 |
+| `ocr_gemini_media_resolution` | high | Optional model image-detail setting |
+| `ocr_gemini_model_name` | empty in code | OCR-specific model override; otherwise uses `gemini_model_name` |
+| `ocr_guidance_timeout_s` | 60 | Positioning window per capture attempt |
+| `ocr_guidance_hold_seconds` | 1.0 | Minimum stable time before capture |
+| `ocr_guidance_stable_frames` | 4 | Minimum consecutive ready observations |
+| `ocr_guidance_prompt_interval_s` | 3 | Minimum interval between different corrections |
+| `ocr_guidance_repeat_interval_s` | 10 | Reminder interval for a persistent correction |
+| `ocr_guidance_capture_attempts` | 2 | Maximum still capture attempts per scan |
+| `ocr_guidance_target_width_cm` | 0 | Known target width; zero disables centimetre guidance |
+| `ocr_guidance_target_height_cm` | 0 | Known target height; must also be set for centimetre guidance |
 | `ocr_guidance_rotation` | 0 | Clockwise mount correction: 0, 90, 180, 270 |
-| `ocr_guidance_mirror` | false | Undo a mirrored camera view after rotation |
-| `ocr_guidance_timeout_s` | 60 | Positioning time before returning to menu |
-| `ocr_guidance_prompt_interval_s` | 3 | Minimum interval between corrective prompts |
-| `ocr_guidance_stable_frames` | 4 | Consecutive acceptable observations before capture |
-| `ocr_guidance_center_tolerance` | 0.12 | Allowed center offset relative to frame dimensions |
-| `ocr_guidance_min_fill` | 0.55 | Minimum page extent on its larger normalized axis |
-| `ocr_guidance_edge_margin` | 0.025 | Required margin around page boundary |
-| `ocr_guidance_min_brightness` | 55 | Minimum mean grayscale brightness, 0–255 |
-| `ocr_guidance_min_sharpness` | 35 | Minimum page-interior Laplacian variance |
-| `ocr_guidance_max_motion` | 9 | Maximum mean difference between preview samples |
+| `ocr_guidance_mirror` | false | Undo a mirrored camera image after rotation |
 
-Rotation and mirroring correct guidance coordinates, not the saved image; OCR
-retains its existing orientation handling.
+The example files use the image-capable
+[`gemini-3.5-flash-lite`](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite)
+for OCR. Existing device model choices remain in effect unless the OCR-specific
+override is set. Rotation and mirror corrections now apply to both guidance and
+the photograph passed to the readers.
 
-## Device acceptance checks
+Pi preview uses `rpicam-vid`/`libcamera-vid` with the configured still aspect ratio.
+It stops before `rpicam-still` takes full-resolution photographs. Still capture
+keeps ownership on the scan thread; cancellation terminates the Pi capture process
+before release or another scan. USB reads depend on the camera driver's read timeout.
 
-With the intended mount and a sighted tester, verify all four camera movement
-instructions reduce the error. Check near/far positioning, a clipped page, low
-light, movement, blur, and a page completely outside the frame. Confirm a stable
-page captures automatically and the captured photograph contains all its edges.
-Repeat with portrait/landscape pages, small print and different backgrounds.
-Check Button 3 cancellation during prompts, positioning and still capture; then
-check timeout returns to menu, unplugged camera, and confidential document playback.
-
-These are conservative page/text-shape heuristics, not a trained document detector.
-Blank rectangles do not trigger immediate capture, but the bounded fallback may
-attempt OCR on them; textured rectangles may resemble text. Boundaries can be missed on low-contrast backgrounds, curved books, strong
-perspective, or with multiple pages. Complete-page framing also cannot guarantee
-that very small print is legible. The actual Pi camera and mounting must be used
-to tune thresholds and validate usability with a blind user before deployment.
-
-## Explanation and privacy buttons
-
-After document playback, the explanation question finishes speaking before its
-response window starts (15 seconds by default via `button_choice_timeout_seconds`).
-Button 1 starts the explanation; Button 2 skips it. Old events are cleared before
-the prompt, presses made during the prompt are retained, and unrelated buttons
-are ignored. No microphone fallback runs for this question.
-
-Privacy selection is buttons only: the choice prompt is played on the main
-speaker, then Button 1 selects private earphones and Button 2 selects the
-speaker. Its response window starts after the prompt and is at least 15 seconds.
-No selection, missing buttons, or a serial error cancels playback;
-there is no spoken-answer fallback or automatic public selection. This applies
-to OCR, translation privacy selection, and the standalone privacy demonstration.

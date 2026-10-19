@@ -7027,3 +7027,64 @@ STDERR: aplay: pcm_write:2178: write error: Interrupted system call
 2026-10-06 00:16:41,106 [INFO] Speaking: "Enter a five-press Morse code. Button 1 is dot; button 2 is "
 2026-10-06 00:17:01,863 [INFO] Shutting down...
 2026-10-06 00:17:01,864 [INFO] Speaking: "Goodbye. Shutting down Blind Assist."
+2026-10-19 10:02:35,209 [INFO] pygame.mixer initialised on default device (buffer=1024, obtained=(24000, -16, 1)).
+2026-10-19 10:02:35,230 [INFO] Module loaded: tts
+2026-10-19 10:02:35,503 [INFO] Vosk installed but no language model found. Configure vosk_model_path_en, vosk_model_path_hi, or vosk_model_path_gu.
+2026-10-19 10:02:35,534 [INFO] STT engines active: google -> sphinx
+2026-10-19 10:02:35,535 [INFO] Recordings will be saved to /var/folders/ky/wz6ftjlj511ddvl7njz4wp7c0000gn/T/blindassist-recordings
+2026-10-19 10:02:35,536 [INFO] Module loaded: voice
+2026-10-19 10:02:35,539 [INFO] Module loaded: ai_query
+2026-10-19 10:02:35,540 [INFO] Morse decoder started with auto-timing.
+2026-10-19 10:02:35,540 [INFO] Module loaded: morse
+2026-10-19 10:02:36,886 [INFO] Module loaded: ocr
+2026-10-19 10:02:36,888 [INFO] Module loaded: translator
+2026-10-19 10:02:37,750 [INFO] Module loaded: live_translator
+2026-10-19 10:02:38,068 [INFO] Module loaded: math_solver
+2026-10-19 10:02:38,424 [INFO] Module loaded: gesture_control
+2026-10-19 10:02:38,424 [INFO] Module loaded: emotion_engine
+2026-10-19 10:02:38,425 [INFO] Module loaded: gps_navigator
+2026-10-19 10:02:38,434 [INFO] Module loaded: confidential_mode
+2026-10-19 10:02:38,441 [INFO] Module loaded: object_detection
+2026-10-19 10:02:38,446 [WARNING] Pico W Morse buttons unavailable, using keyboard fallback: No Pico W detected. Check the USB cable connection.
+2026-10-19 10:02:38,446 [INFO] ==================================================
+2026-10-19 10:02:38,446 [INFO] BlindAssist Starting...
+2026-10-19 10:02:38,446 [INFO] ==================================================
+2026-10-19 10:02:39,393 [INFO] TTS Manager ready.
+2026-10-19 10:02:39,393 [INFO] Speaking utterance (57 characters).
+2026-10-19 10:02:39,393 [WARNING] gTTS unavailable (No module named 'gtts'); using offline engine for 30s.
+2026-10-19 10:02:39,432 [WARNING] pygame playback failed (Unrecognized file type (not AIFF nor 8SVX)); trying system player.
+2026-10-19 10:04:58,720 [INFO] pygame not installed — falling back to system audio players.
+2026-10-19 10:04:58,720 [INFO] Module loaded: tts
+2026-10-19 10:04:58,721 [INFO] Module loaded: voice
+2026-10-19 10:04:58,725 [INFO] Module loaded: ai_query
+2026-10-19 10:04:58,726 [INFO] Morse decoder started with auto-timing.
+2026-10-19 10:04:58,727 [INFO] Module loaded: morse
+2026-10-19 10:04:59,045 [INFO] Module loaded: ocr
+2026-10-19 10:04:59,099 [INFO] Module loaded: translator
+2026-10-19 10:05:00,096 [INFO] Module loaded: live_translator
+2026-10-19 10:05:00,388 [INFO] Module loaded: math_solver
+2026-10-19 10:05:00,389 [ERROR] mediapipe not available: No module named 'mediapipe'
+2026-10-19 10:05:00,390 [INFO] Module loaded: gesture_control
+2026-10-19 10:05:00,391 [INFO] Module loaded: emotion_engine
+2026-10-19 10:05:00,392 [INFO] Module loaded: gps_navigator
+2026-10-19 10:05:00,399 [INFO] Module loaded: confidential_mode
+2026-10-19 10:05:00,407 [INFO] Module loaded: object_detection
+2026-10-19 10:05:00,414 [WARNING] Pico W Morse buttons unavailable, using keyboard fallback: No Pico W detected. Check the USB cable connection.
+2026-10-19 10:05:00,415 [INFO] Mode 4: Translate
+2026-10-19 10:05:00,417 [INFO] Private translation [en→gu] completed via mock (5 source characters).
+2026-10-19 10:05:00,420 [INFO] Translating from English to Gujarati: "This is a complete sentence"
+2026-10-19 10:05:00,421 [INFO] Translated via libre → "આ એક સંપૂર્ણ વાક્ય છે"
+2026-10-19 10:05:00,422 [INFO] Private translation from English to Hindi (5 characters).
+2026-10-19 10:05:00,423 [INFO] Private translation completed from offline phrasebook.
+2026-10-19 10:05:00,424 [INFO] Private translation from English to Gujarati (5 characters).
+2026-10-19 10:05:00,427 [INFO] Private translation completed from offline phrasebook.
+2026-10-19 10:05:00,427 [INFO] Private translation from Hindi to English (6 characters).
+2026-10-19 10:05:00,428 [INFO] Private translation completed from offline phrasebook.
+2026-10-19 10:05:00,429 [INFO] Private translation from Gujarati to English (6 characters).
+2026-10-19 10:05:00,429 [INFO] Private translation completed from offline phrasebook.
+2026-10-19 10:05:00,430 [INFO] Private translation from Hindi to Gujarati (6 characters).
+2026-10-19 10:05:00,431 [INFO] Private translation completed from offline phrasebook.
+2026-10-19 10:05:00,431 [INFO] Private translation from Gujarati to Hindi (6 characters).
+2026-10-19 10:05:00,432 [INFO] Private translation completed from offline phrasebook.
+2026-10-19 10:05:00,433 [INFO] Private translation from English to Hindi (5 characters).
+2026-10-19 10:05:00,434 [INFO] Private translation completed from offline phrasebook.

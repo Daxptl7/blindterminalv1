@@ -340,6 +340,18 @@ def check_translation():
     check("Versioned validated translation cache", info.get("cache_schema") == 2,
           f"schema={info.get('cache_schema')}, entries={info.get('cache_entries')}")
 
+    try:
+        from modules.live_translator import LiveTranslator
+        live = LiveTranslator().diagnostics()
+        check("Live translation audio and configuration", live["ready"] or None,
+              live["error"] or f"model={live['model']}",
+              "run .venv/bin/python scripts/check_live_translation.py --list-devices",
+              required=False)
+    except Exception:
+        check("Live translation preflight", None,
+              "live translation configuration could not be checked",
+              "check live settings and dependencies", required=False)
+
 
 # ── VERIFIED MATH ──────────────────────────────────────────
 def check_math_solver():
