@@ -1776,6 +1776,14 @@ def shutdown():
     _shutdown_done = True
 
     logger.info("Shutting down...")
+    # Cancel old speech before cleanup or a goodbye can queue behind it.
+    # SIGINT also reaches aplay; mark this as cancellation before its worker
+    # interprets the interrupted write as a device failure and retries.
+    if _has("tts"):
+        try:
+            _modules["tts"].stop()
+        except Exception as e:
+            logger.debug("Could not stop active speech during shutdown: %s", e)
     if _has("ai_query") and hasattr(_modules["ai_query"], "shutdown"):
         _modules["ai_query"].shutdown()
     # FIX: this used to reference _modules["tts"].tts_manager, which does not

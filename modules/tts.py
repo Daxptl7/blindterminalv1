@@ -106,7 +106,10 @@ def _validate_device(configured: str, role: str, fallback_index: int,
         return configured
 
     if avoid is not None:
-        logger.error("Private output is unavailable; private playback disabled.")
+        logger.error(
+            "Earphone output %r is unavailable (available: %s). Set "
+            "earphone_device to the headset output in settings.json; "
+            "private playback is disabled.", configured, ", ".join(_AVAILABLE_OUTPUTS))
         return None
     candidates = _AVAILABLE_OUTPUTS
     substitute = candidates[min(fallback_index, len(candidates) - 1)]
@@ -143,6 +146,10 @@ EARPHONE_DEVICE = _validate_device(_configured_earphone, "Earphone", 0,
 
 class AudioRoutingError(RuntimeError):
     pass
+
+
+class SpeechCancelled(AudioRoutingError):
+    """Playback deliberately stopped; another backend must not resume it."""
 
 
 def require_private_output(device=None):
@@ -495,6 +502,11 @@ class TTSManager:
         from modules.config_loader import load_settings
         return load_settings()
 
+    def _check_cancelled(self, generation):
+        if (generation != getattr(self, "_generation", 0)
+                or not getattr(self, "running", True)):
+            raise SpeechCancelled("Speech cancelled.")
+
     # ── SYNTHESIS ────────────────────────────────────────────
     def _prepare_audio(self, data: bytes, fmt: str):
         """Apply speech loudness and online voice tempo before any player."""
@@ -695,6 +707,8 @@ class TTSManager:
             _release_mixer()
 
     def _play_system(self, data: bytes, fmt: str) -> bool:
+        generation = getattr(self, "_generation", 0)
+        self._check_cancelled(generation)
         _release_mixer()
         binary, build_args = _find_player(fmt)
         if not binary:
@@ -707,12 +721,16 @@ class TTSManager:
                 tmp_path = tmp.name
 
             device = None if (IS_MACOS or _current_device in (None, "default")) else _current_device
-            proc = subprocess.Popen(build_args(tmp_path, device),
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             with self._proc_lock:
+                self._check_cancelled(generation)
+                proc = subprocess.Popen(build_args(tmp_path, device),
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self._proc = proc
             proc.wait(timeout=120)
+            self._check_cancelled(generation)
             return proc.returncode == 0
+        except SpeechCancelled:
+            raise
         except subprocess.TimeoutExpired:
             logger.error("System audio player timed out.")
             return False
@@ -740,6 +758,8 @@ class TTSManager:
         return False so the caller can decide, rather than playing the text out
         of the wrong speaker.
         """
+        generation = getattr(self, "_generation", 0)
+        self._check_cancelled(generation)
         _release_mixer()
         payload, play_fmt = data, fmt
         if fmt == "mp3" and not shutil.which("mpg123") and not shutil.which("mpg321"):
@@ -762,18 +782,21 @@ class TTSManager:
 
             for template in _routed_commands(tmp_path, play_fmt, device):
                 try:
-                    proc = subprocess.Popen(template, stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE, text=True)
                     with self._proc_lock:
+                        self._check_cancelled(generation)
+                        proc = subprocess.Popen(template, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
                         self._proc = proc
-                    proc.wait(timeout=120)
+                    stdout, stderr = proc.communicate(timeout=120)
+                    self._check_cancelled(generation)
                     if proc.returncode == 0:
-                     return True
-                    stdout, stderr = proc.communicate()
+                        return True
                     logger.error(
                        f"Routed playback failed (exit {proc.returncode}): "
                        f"{' '.join(template)}\nSTDOUT: {stdout}\nSTDERR: {stderr}"
                 )
+                except SpeechCancelled:
+                    raise
                 except subprocess.TimeoutExpired:
                     logger.error("Routed audio player timed out.")
                     try:
@@ -817,6 +840,7 @@ class TTSManager:
         self._speaking.set()
         try:
             generation = getattr(self, "_generation", 0)
+            self._check_cancelled(generation)
             private = current_policy().private or (
                 bool(device_override) and device_override == EARPHONE_DEVICE)
             if private:
@@ -824,14 +848,13 @@ class TTSManager:
                 # Private text must never be sent to a network synthesizer.
                 with processing_session(PRIVATE):
                     data, fmt = self._synthesize(text, lang)
-                if generation != getattr(self, "_generation", 0):
-                    raise AudioRoutingError("Speech cancelled.")
+                self._check_cancelled(generation)
                 if data and fmt and self._play_routed(data, fmt, device):
                     return True
+                self._check_cancelled(generation)
                 raise AudioRoutingError("Private playback failed; content was not sent to a public output.")
             data, fmt = self._synthesize(text, lang)
-            if generation != getattr(self, "_generation", 0):
-                raise AudioRoutingError("Speech cancelled.")
+            self._check_cancelled(generation)
 
             if data and fmt:
                 # When a specific card has been selected (Confidential Mode),
@@ -842,6 +865,7 @@ class TTSManager:
                 if device not in (None, "default"):
                     if self._play_routed(data, fmt, device):
                         return
+                    self._check_cancelled(generation)
 
                     # The gTTS voice is MP3, and on a Pi with no mpg123/ffmpeg
                     # and a pre-1.1 libsndfile there is nothing that can decode
@@ -856,9 +880,11 @@ class TTSManager:
                         # produced usable audio — the user is waiting on this.
                         for synth in (lambda: self._synthesize_offline_wav(text, lang),
                                       lambda: _espeak_to_wav(text, self._current_rate, lang)):
+                            self._check_cancelled(generation)
                             wav = synth()
                             if wav:
                                 wav, _ = self._prepare_audio(wav, "wav")
+                            self._check_cancelled(generation)
                             if wav and self._play_routed(wav, "wav", device):
                                 logger.warning(
                                     f"Played {device} in the offline voice: no "
@@ -867,6 +893,7 @@ class TTSManager:
                                     "on this card.")
                                 return
 
+                    self._check_cancelled(generation)
                     logger.error(
                         f"Could not play audio on {device}; falling back to the "
                         "default output. Confidential routing is NOT in effect.")
@@ -875,14 +902,17 @@ class TTSManager:
                 # useful fact when the device is silent, and it used to be
                 # logged only on failure — so a silent-but-"successful" path
                 # was invisible.
+                self._check_cancelled(generation)
                 if self._play_pygame(data, fmt):
                     logger.debug(f"Played {fmt} via pygame (default output).")
                     return
+                self._check_cancelled(generation)
                 if self._play_system(data, fmt):
                     logger.debug(f"Played {fmt} via system player (default output).")
                     return
                 logger.warning("All file-based playback failed; using direct engine.")
 
+            self._check_cancelled(generation)
             if self._play_pyttsx3_direct(text, lang):
                 logger.debug("Played via pyttsx3 direct.")
                 return
@@ -910,6 +940,9 @@ class TTSManager:
                 logger.info("Speaking utterance (%s characters).", len(item.text))
                 with processing_session(item.policy):
                     self._deliver(item.text, item.lang, item.device)
+            except SpeechCancelled as e:
+                item.error = e
+                logger.info("Speech playback cancelled.")
             except Exception as e:
                 item.error = AudioRoutingError("Speech playback failed.")
                 logger.error("Speech playback failed (%s).", type(e).__name__)
@@ -974,7 +1007,15 @@ class TTSManager:
 
     def stop(self):
         """Stop what is playing now and discard anything pending."""
-        self._generation = getattr(self, "_generation", 0) + 1
+        # Serialize cancellation with launching/registering a CLI player so
+        # stop cannot miss a process created between Popen and registration.
+        with self._proc_lock:
+            self._generation = getattr(self, "_generation", 0) + 1
+            if self._proc and self._proc.poll() is None:
+                try:
+                    self._proc.terminate()
+                except Exception:
+                    pass
         self.flush()
         if PYGAME_AVAILABLE:
             try:
@@ -982,12 +1023,6 @@ class TTSManager:
                 pygame.mixer.music.stop()
             except Exception:
                 pass
-        with self._proc_lock:
-            if self._proc and self._proc.poll() is None:
-                try:
-                    self._proc.terminate()
-                except Exception:
-                    pass
         self._speaking.clear()
 
     def shutdown(self):
