@@ -90,13 +90,11 @@ _AVAILABLE_OUTPUTS = _alsa_playback_devices()
 
 def _validate_device(configured: str, role: str, fallback_index: int,
                      avoid: str = None) -> str:
-    """Return `configured` if the hardware has it, else the best substitute.
+    """Keep a verified route; use system default only for public speech.
 
-    `avoid` names a card the substitute must not land on. It exists for the
-    earphone: with cards 2 and 3 present and the speaker on 3, a positional
-    fallback picks index 1 — the speaker — so a mistyped earphone_device made
-    private speech come out of the loudspeaker while still reporting success.
-    Preferring any other real output keeps the private/public split intact.
+    ALSA enumeration order does not identify the speaker. The first output
+    can be an unused HDMI port that accepts audio successfully but is silent.
+    Missing earphones must stay disabled rather than use an unverified route.
     """
     if IS_MACOS or not configured or configured == "default":
         return configured
@@ -111,19 +109,12 @@ def _validate_device(configured: str, role: str, fallback_index: int,
             "earphone_device to the headset output in settings.json; "
             "private playback is disabled.", configured, ", ".join(_AVAILABLE_OUTPUTS))
         return None
-    candidates = _AVAILABLE_OUTPUTS
-    substitute = candidates[min(fallback_index, len(candidates) - 1)]
     logger.error(
         f"{role} device {configured!r} from settings.json does not exist on this "
         f"machine (available: {', '.join(_AVAILABLE_OUTPUTS)}). Falling back to "
-        f"{substitute!r} — fix {role.lower()}_device in settings.json."
+        f"the system default output — fix {role.lower()}_device in settings.json."
     )
-    if avoid and substitute == avoid:
-        logger.error(
-            "The earphone and the speaker are now the same card: private "
-            "speech WILL be audible on the speaker. Set earphone_device in "
-            "settings.json to a second output card.")
-    return substitute
+    return "default"
 
 
 SPEAKER_DEVICE = _validate_device(
@@ -723,10 +714,11 @@ class TTSManager:
                 tmp.write(data)
                 tmp_path = tmp.name
 
-            device = None if (IS_MACOS or _current_device in (None, "default")) else _current_device
             with self._proc_lock:
                 self._check_cancelled(generation)
-                proc = subprocess.Popen(build_args(tmp_path, device),
+                # Named-device playback already ran in _play_routed(). This
+                # fallback must use the system default, not retry that card.
+                proc = subprocess.Popen(build_args(tmp_path, None),
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self._proc = proc
             proc.wait(timeout=120)

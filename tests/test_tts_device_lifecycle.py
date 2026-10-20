@@ -94,6 +94,31 @@ class TTSDeviceLifecycleTests(unittest.TestCase):
                 mock.patch.object(tts.subprocess, "Popen", return_value=proc):
             self.assertTrue(self.manager._play_routed(b"wav", "wav", "plughw:3,0"))
 
+    def test_default_player_does_not_retry_failed_configured_card(self):
+        proc = mock.Mock(returncode=0)
+        with mock.patch.object(tts, "IS_MACOS", False), \
+                mock.patch.object(tts, "PYGAME_AVAILABLE", False), \
+                mock.patch.object(tts, "_current_device", "plughw:3,0"), \
+                mock.patch.object(tts.shutil, "which", side_effect=lambda name: (
+                    "/usr/bin/aplay" if name == "aplay" else None)), \
+                mock.patch.object(tts.subprocess, "Popen", return_value=proc) as player:
+            self.assertTrue(self.manager._play_system(b"wav", "wav"))
+        command = player.call_args.args[0]
+        self.assertEqual(command[:2], ["/usr/bin/aplay", "-q"])
+        self.assertNotIn("-D", command)
+        self.assertNotIn("plughw:3,0", command)
+
+    def test_missing_speaker_uses_default_instead_of_first_hdmi_card(self):
+        with mock.patch.object(tts, "IS_MACOS", False), \
+                mock.patch.object(tts, "_AVAILABLE_OUTPUTS", ["plughw:0,0", "plughw:1,0"]):
+            self.assertEqual(tts._validate_device("plughw:3,0", "Speaker", 0), "default")
+
+    def test_missing_earphone_remains_disabled(self):
+        with mock.patch.object(tts, "IS_MACOS", False), \
+                mock.patch.object(tts, "_AVAILABLE_OUTPUTS", ["plughw:0,0"]):
+            self.assertIsNone(tts._validate_device("plughw:2,0", "Earphone", 0,
+                                                  avoid="plughw:0,0"))
+
 
 if __name__ == "__main__":
     unittest.main()
