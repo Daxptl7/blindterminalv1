@@ -72,7 +72,9 @@ class TTSDeviceLifecycleTests(unittest.TestCase):
             # would return the Device or resource busy error seen on the Pi.
             self.assertFalse(self.opened, "SDL still owns the output card")
             self.assertEqual(command[command.index("-D") + 1], "plughw:3,0")
-            return mock.Mock(returncode=0)
+            proc = mock.Mock(returncode=0)
+            proc.communicate.return_value = ("", "")
+            return proc
 
         with mock.patch.object(tts, "PYGAME_AVAILABLE", True), \
                 mock.patch.object(tts, "pygame", self.pg, create=True), \
@@ -84,10 +86,12 @@ class TTSDeviceLifecycleTests(unittest.TestCase):
         player.assert_called_once()
 
     def test_routed_playback_works_without_pygame(self):
+        proc = mock.Mock(returncode=0)
+        proc.communicate.return_value = ("", "")
         with mock.patch.object(tts, "PYGAME_AVAILABLE", False), \
                 mock.patch.object(tts.shutil, "which", side_effect=lambda name: (
                     "/usr/bin/aplay" if name == "aplay" else None)), \
-                mock.patch.object(tts.subprocess, "Popen", return_value=mock.Mock(returncode=0)):
+                mock.patch.object(tts.subprocess, "Popen", return_value=proc):
             self.assertTrue(self.manager._play_routed(b"wav", "wav", "plughw:3,0"))
 
 

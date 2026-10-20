@@ -9,7 +9,7 @@ producing total silence with no error and no console fallback. That failure
 mode is now impossible: every utterance walks a playback chain and, if every
 audio backend fails, is still printed to the console and logged.
 
-Synthesis:  gTTS (online, native Hindi/Gujarati/Indian English) → pyttsx3 (offline)
+Synthesis:  gTTS (online) → espeak (offline) → pyttsx3 (offline)
 Playback:   pygame → system player (afplay/aplay/mpg123) → pyttsx3 direct → console
 
 Public API (unchanged, plus shutdown/flush):
@@ -329,7 +329,8 @@ def _espeak_to_wav(text: str, rate: int, lang: str = "eng") -> bytes:
         voice = _ESPEAK_VOICES.get(str(lang).lower(), "en")
         subprocess.run([espeak, "-v", voice,
                         "-s", str(int(rate)), "-a", "175", "-g", "4",
-                        "-w", tmp_path, text], timeout=60,
+                        "-w", tmp_path, "--stdin"], input=text.encode("utf-8"),
+                       timeout=60, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.getsize(tmp_path) > 44:
             with open(tmp_path, "rb") as f:
@@ -493,7 +494,8 @@ class TTSManager:
             self._engine.setProperty("volume", self.settings.get("tts_volume", 1.0))
             self._engine_available = True
         except Exception as e:
-            logger.warning(f"pyttsx3 init failed: {e}. Offline speech unavailable.")
+            logger.warning("pyttsx3 init failed (%s); using native offline speech.",
+                           type(e).__name__)
             self._engine = None
             self._engine_available = False
 
@@ -640,17 +642,15 @@ class TTSManager:
                 logger.debug(f"Could not restore default voice: {e}")
 
     def _synthesize_offline_wav(self, text: str, lang: str = "eng") -> bytes:
-        """pyttsx3 → WAV bytes, or b"". Split out so routed playback can fall
-        back to a format `aplay -D` can definitely handle."""
-        # For Hindi and Gujarati, go to espeak-ng first. pyttsx3's default
-        # voice is whatever the driver picked at init — English on every image
-        # this runs on — and handing it Devanagari produces silence. espeak-ng
-        # has the actual voices, so an offline device can still speak a
-        # translation instead of just displaying one.
-        if _ESPEAK_VOICES.get(str(lang).lower(), "en") != "en":
-            data = _espeak_to_wav(text, self._current_rate, lang)
-            if data:
-                return data
+        """Native speech command → pyttsx3 → WAV bytes, or b"".
+
+        A working `espeak` command must remain usable when pyttsx3 is
+        missing, cannot load its driver, or stalls in its platform event loop.
+        Generate a file so playback still honours the queued output device.
+        """
+        data = _espeak_to_wav(text, self._current_rate, lang)
+        if data:
+            return data
 
         if not self._engine_available:
             return b""
