@@ -505,13 +505,26 @@ class TTSManager:
 
     # ── SYNTHESIS ────────────────────────────────────────────
     def _prepare_audio(self, data: bytes, fmt: str):
-        """Apply speech loudness and online voice tempo before any player."""
+        """Filter speech, then apply loudness and online tempo before routing."""
         settings = self.settings
         gain = float(settings.get("tts_gain", 1.0))
         normalize = settings.get("tts_normalize_enabled", False)
         # Offline synthesis already uses tts_rate. Google returns fixed-rate
         # MP3, so its tempo needs a separate, pitch-preserving adjustment.
         speed = float(settings.get("tts_playback_speed", 1.0)) if fmt == "mp3" else 1.0
+        if settings.get("tts_noise_filter_enabled", False):
+            try:
+                from modules.audio_filters import filter_speech_wav
+
+                wav = _decode_mp3_to_wav(data) if fmt == "mp3" else data
+                if not wav:
+                    raise ValueError("No PCM decoder available for speech filtering")
+                data, fmt = filter_speech_wav(wav), "wav"
+            except Exception as e:
+                # Speech remains available if a decoder or optional audio
+                # dependency is missing. Never change the selected output.
+                logger.warning("Speech noise filter unavailable (%s); using original audio.",
+                               type(e).__name__)
         if gain == 1.0 and not normalize and speed == 1.0:
             return data, fmt
 
