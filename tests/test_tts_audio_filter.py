@@ -59,6 +59,14 @@ class SpeechFilterTests(unittest.TestCase):
         self.assertEqual(int(samples[-1, 0]), 0)
         self.assertLessEqual(np.max(np.abs(samples.astype(np.int32))), 32768)
 
+    def test_transient_filtering_does_not_raise_input_peak(self):
+        time = np.arange(24000) / 24000
+        source = 6000 * np.sign(np.sin(2 * np.pi * 1000 * time))
+        _, samples = read_wav(filter_speech_wav(make_wav(source)))
+        peak = np.max(np.abs(samples.astype(np.int32)))
+        self.assertLessEqual(peak, 6000)
+        self.assertGreater(peak, 5000)
+
     def test_silence_empty_and_short_utterances(self):
         for length in (0, 1, 2, 10, 2400):
             with self.subTest(length=length):

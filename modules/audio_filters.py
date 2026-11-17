@@ -24,6 +24,7 @@ def filter_speech_wav(data: bytes) -> bytes:
     samples = samples.reshape(-1, params.nchannels).astype(np.float64)
     if not samples.size:
         return data
+    input_peak = float(np.max(np.abs(samples)))
     upper = min(8000.0, params.framerate * 0.45)
     if upper <= 80:
         raise ValueError("Speech sample rate is too low for the filter")
@@ -35,7 +36,12 @@ def filter_speech_wav(data: bytes) -> bytes:
         ramp = np.linspace(0.0, 1.0, fade)[:, None]
         samples[:fade] *= ramp
         samples[-fade:] *= ramp[::-1]
-    # Filtering can overshoot even when its input is within PCM bounds.
+    # A bandpass can overshoot at transients. Attenuate the whole utterance
+    # instead of clipping those peaks into extra distortion; never boost it.
+    output_peak = float(np.max(np.abs(samples)))
+    peak_limit = min(input_peak, 0.95 * 32767)
+    if output_peak > peak_limit:
+        samples *= peak_limit / output_peak
     samples = np.clip(np.rint(samples), -32768, 32767).astype("<i2")
     output = io.BytesIO()
     with wave.open(output, "wb") as target:
